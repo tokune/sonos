@@ -126,6 +126,12 @@
         allMusicCount: $("#allMusicCount"),
         playAllMusicBtn: $("#playAllMusicBtn"),
         shuffleAllMusicBtn: $("#shuffleAllMusicBtn"),
+        webdavUrlInput: $("#webdavUrlInput"),
+        webdavUsernameInput: $("#webdavUsernameInput"),
+        webdavPasswordInput: $("#webdavPasswordInput"),
+        testWebdavBtn: $("#testWebdavBtn"),
+        saveWebdavBtn: $("#saveWebdavBtn"),
+        webdavStatus: $("#webdavStatus"),
     };
 
     // ─── Toast ───────────────────────────────────────────────────
@@ -701,6 +707,7 @@
           </div>`;
                 } else {
                     const isSelected = state.selectedFiles.has(f.path);
+                    const srcBadge = f.source === "webdav" ? '<span class="webdav-badge">WebDAV</span>' : '';
                     return `
           <div class="file-item${isSelected ? " selected" : ""}" data-path="${f.path}">
             <label class="checkbox-label file-select-label" data-check-path="${f.path}">
@@ -710,11 +717,11 @@
             <div class="file-icon audio">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
             </div>
-            <span class="file-name">${f.name}</span>
+            <span class="file-name">${f.name}${srcBadge}</span>
             <span class="file-size">${formatSize(f.size)}</span>
             <div class="file-actions">
-              <button class="btn sm primary play-file" data-path="${f.path}" title="播放">▶ 播放</button>
-              <button class="btn sm add-to-playlist" data-path="${f.path}" data-name="${f.name}" data-size="${f.size || 0}" title="添加到播放列表">+ 列表</button>
+              <button class="btn sm primary play-file" data-path="${f.path}" data-source="${f.source || 'local'}" title="播放">▶ 播放</button>
+              <button class="btn sm add-to-playlist" data-path="${f.path}" data-name="${f.name}" data-size="${f.size || 0}" data-source="${f.source || 'local'}" title="添加到播放列表">+ 列表</button>
             </div>
           </div>`;
                 }
@@ -781,6 +788,7 @@
                     await api.post("/api/files/play", {
                         filePath: btn.dataset.path,
                         deviceIP: state.selectedDevice,
+                        source: btn.dataset.source || "local",
                     });
                     toast("开始播放", "success");
                     setTimeout(pollState, 500);
@@ -798,6 +806,7 @@
                     path: btn.dataset.path,
                     name: btn.dataset.name,
                     size: parseInt(btn.dataset.size) || 0,
+                    source: btn.dataset.source || "local",
                 });
             });
         });
@@ -921,6 +930,7 @@
         const itemsHTML = list
             .map((f, i) => {
                 const dirHint = f.path.includes("/") ? f.path.substring(0, f.path.lastIndexOf("/")) : "";
+                const srcBadge = f.source === "webdav" ? '<span class="webdav-badge">WebDAV</span>' : '';
                 return `
           <div class="file-item" data-allmusic-idx="${i}">
             <div class="all-music-number">${i + 1}</div>
@@ -929,12 +939,12 @@
             </div>
             <div class="all-music-info">
               <span class="file-name">${f.name}</span>
-              ${dirHint ? `<span class="all-music-dir">${dirHint}</span>` : ""}
+              ${dirHint ? `<span class="all-music-dir">${dirHint}</span>` : ""}${srcBadge}
             </div>
             <span class="file-size">${formatSize(f.size)}</span>
             <div class="file-actions">
-              <button class="btn sm primary play-all-music-file" data-path="${f.path}" title="播放">▶ 播放</button>
-              <button class="btn sm add-to-playlist-allmusic" data-path="${f.path}" data-name="${f.name}" data-size="${f.size || 0}" title="添加到播放列表">+ 列表</button>
+              <button class="btn sm primary play-all-music-file" data-path="${f.path}" data-source="${f.source || 'local'}" title="播放">▶ 播放</button>
+              <button class="btn sm add-to-playlist-allmusic" data-path="${f.path}" data-name="${f.name}" data-size="${f.size || 0}" data-source="${f.source || 'local'}" title="添加到播放列表">+ 列表</button>
             </div>
           </div>`;
             })
@@ -954,6 +964,7 @@
                     await api.post("/api/files/play", {
                         filePath: btn.dataset.path,
                         deviceIP: state.selectedDevice,
+                        source: btn.dataset.source || "local",
                     });
                     toast("开始播放", "success");
                     setTimeout(pollState, 500);
@@ -971,6 +982,7 @@
                     path: btn.dataset.path,
                     name: btn.dataset.name,
                     size: parseInt(btn.dataset.size) || 0,
+                    source: btn.dataset.source || "local",
                 });
             });
         });
@@ -1340,6 +1352,12 @@
             const cfg = await api.get("/api/config");
             els.musicDirInput.value = cfg.musicDir || "";
             els.serverAddr.textContent = `${location.hostname}:${location.port || 80}`;
+            // WebDAV fields
+            if (els.webdavUrlInput) els.webdavUrlInput.value = cfg.webdavUrl || "";
+            if (els.webdavUsernameInput) els.webdavUsernameInput.value = cfg.webdavUsername || "";
+            if (els.webdavPasswordInput) els.webdavPasswordInput.value = cfg.webdavPassword === "********" ? "" : (cfg.webdavPassword || "");
+            if (els.webdavPasswordInput && cfg.webdavPassword === "********") els.webdavPasswordInput.placeholder = "密码已保存 (留空则不修改)";
+            if (els.webdavStatus) els.webdavStatus.textContent = cfg.webdavUrl ? "已配置 WebDAV" : "";
         } catch { }
     }
 
@@ -1458,6 +1476,57 @@
                 } else {
                     toast("音乐目录已更新", "success");
                     loadFiles();
+                }
+            } catch (err) {
+                toast("保存失败: " + err.message, "error");
+            }
+        });
+
+        // WebDAV test connection
+        els.testWebdavBtn?.addEventListener("click", async () => {
+            const url = els.webdavUrlInput.value.trim();
+            if (!url) { toast("请输入 WebDAV 地址", "error"); return; }
+            els.webdavStatus.textContent = "正在测试连接...";
+            els.webdavStatus.style.color = "var(--text-muted)";
+            try {
+                const res = await api.post("/api/webdav/test", {
+                    url,
+                    username: els.webdavUsernameInput.value.trim(),
+                    password: els.webdavPasswordInput.value,
+                });
+                if (res.ok) {
+                    els.webdavStatus.textContent = "✓ 连接成功";
+                    els.webdavStatus.style.color = "var(--accent)";
+                    toast("WebDAV 连接成功", "success");
+                } else {
+                    els.webdavStatus.textContent = "✗ 连接失败: " + (res.error || "未知错误");
+                    els.webdavStatus.style.color = "var(--danger)";
+                    toast("WebDAV 连接失败: " + (res.error || ""), "error");
+                }
+            } catch (err) {
+                els.webdavStatus.textContent = "✗ 连接失败: " + err.message;
+                els.webdavStatus.style.color = "var(--danger)";
+                toast("测试失败: " + err.message, "error");
+            }
+        });
+
+        // WebDAV save
+        els.saveWebdavBtn?.addEventListener("click", async () => {
+            const url = els.webdavUrlInput.value.trim();
+            const username = els.webdavUsernameInput.value.trim();
+            const password = els.webdavPasswordInput.value;
+            try {
+                const body = { webdavUrl: url, webdavUsername: username };
+                if (password) body.webdavPassword = password;
+                const res = await api.put("/api/config", body);
+                if (res.error) {
+                    toast(res.error, "error");
+                } else {
+                    toast(url ? "WebDAV 设置已保存" : "WebDAV 已清除", "success");
+                    els.webdavStatus.textContent = url ? "已配置 WebDAV" : "";
+                    els.webdavStatus.style.color = "var(--text-muted)";
+                    loadFiles();
+                    if (state.currentView === "allMusic") loadAllMusic();
                 }
             } catch (err) {
                 toast("保存失败: " + err.message, "error");

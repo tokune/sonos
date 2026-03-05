@@ -92,6 +92,9 @@ async function saveJSON(path: string, data: unknown) {
 
 interface AppConfig {
     musicDir: string;
+    webdavUrl?: string;
+    webdavUsername?: string;
+    webdavPassword?: string;
 }
 
 interface Playlist {
@@ -214,6 +217,7 @@ interface FileEntry {
     isDir: boolean;
     size?: number;
     children?: FileEntry[];
+    source?: "local" | "webdav";
 }
 
 async function scanMusicDir(dir: string, basePath = ""): Promise<FileEntry[]> {
@@ -239,6 +243,90 @@ async function scanMusicDir(dir: string, basePath = ""): Promise<FileEntry[]> {
         if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
         return a.name.localeCompare(b.name);
     });
+}
+
+// ─── WebDAV Scanner ──────────────────────────────────────────────
+function getWebDAVHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+        "Content-Type": "application/xml; charset=utf-8",
+        "Depth": "1",
+    };
+    if (config.webdavUsername) {
+        const cred = btoa(`${config.webdavUsername}:${config.webdavPassword || ""}`);
+        headers["Authorization"] = `Basic ${cred}`;
+    }
+    return headers;
+}
+
+async function scanWebDAV(davUrl: string, basePath = ""): Promise<FileEntry[]> {
+    const entries: FileEntry[] = [];
+    try {
+        const url = davUrl.endsWith("/") ? davUrl : davUrl + "/";
+        const res = await fetch(url, {
+            method: "PROPFIND",
+            headers: getWebDAVHeaders(),
+            body: `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:resourcetype/>
+    <d:getcontentlength/>
+    <d:displayname/>
+  </d:prop>
+</d:propfind>`,
+        });
+        if (!res.ok) return entries;
+        const xml = await res.text();
+
+        // Simple XML parsing for DAV responses
+        const responses = xml.split("<d:response>").slice(1).map(r => r.split("</d:response>")[0] || r);
+        // Also handle uppercase / no-prefix variants
+        const allResponses = xml.split(/<(?:d:|D:)?response>/i).slice(1).map(r => r.split(/<\/(?:d:|D:)?response>/i)[0] || r);
+        const items = allResponses.length > responses.length ? allResponses : responses;
+
+        for (const item of items) {
+            // Extract href
+            const hrefMatch = item.match(/<(?:d:|D:)?href>([^<]+)<\/(?:d:|D:)?href>/i);
+            if (!hrefMatch) continue;
+            const href = decodeURIComponent(hrefMatch[1]);
+
+            // Skip the directory itself (first response is always the requested directory)
+            const normalizedUrl = new URL(url).pathname.replace(/\/+$/, "");
+            const normalizedHref = href.replace(/\/+$/, "");
+            if (normalizedHref === normalizedUrl || normalizedHref === "") continue;
+
+            const isCollection = /<(?:d:|D:)?collection/i.test(item);
+            const name = href.replace(/\/$/, "").split("/").pop() || "";
+            if (!name || name.startsWith(".")) continue;
+
+            const relPath = basePath ? `${basePath}/${name}` : name;
+
+            if (isCollection) {
+                const childUrl = url + encodeURIComponent(name) + "/";
+                const children = await scanWebDAV(childUrl, relPath);
+                if (children.length > 0) {
+                    entries.push({ name, path: relPath, isDir: true, children, source: "webdav" });
+                }
+            } else if (AUDIO_EXTENSIONS.has(extname(name).toLowerCase())) {
+                const sizeMatch = item.match(/<(?:d:|D:)?getcontentlength>([^<]+)<\/(?:d:|D:)?getcontentlength>/i);
+                const size = sizeMatch ? parseInt(sizeMatch[1]) : 0;
+                entries.push({ name, path: relPath, isDir: false, size, source: "webdav" });
+            }
+        }
+    } catch (err) {
+        console.error("WebDAV scan error:", err);
+    }
+    return entries.sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+    });
+}
+
+function markLocalSource(entries: FileEntry[]): FileEntry[] {
+    return entries.map(e => ({
+        ...e,
+        source: "local" as const,
+        children: e.children ? markLocalSource(e.children) : undefined,
+    }));
 }
 
 // ─── HTTP Router ─────────────────────────────────────────────────
@@ -494,12 +582,19 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
 
     // ── Files routes ──
     if (path === "/api/files" && method === "GET") {
-        const files = await scanMusicDir(config.musicDir);
-        return json(files);
+        const localFiles = markLocalSource(await scanMusicDir(config.musicDir));
+        let allFiles = localFiles;
+        if (config.webdavUrl) {
+            try {
+                const webdavFiles = await scanWebDAV(config.webdavUrl);
+                allFiles = [...localFiles, ...webdavFiles];
+            } catch { }
+        }
+        return json(allFiles);
     }
 
     if (path === "/api/files/all" && method === "GET") {
-        const files = await scanMusicDir(config.musicDir);
+        const localFiles = markLocalSource(await scanMusicDir(config.musicDir));
         const flattenFiles = (entries: FileEntry[]): FileEntry[] => {
             const result: FileEntry[] = [];
             for (const e of entries) {
@@ -511,7 +606,14 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
             }
             return result;
         };
-        return json(flattenFiles(files));
+        let flat = flattenFiles(localFiles);
+        if (config.webdavUrl) {
+            try {
+                const webdavFiles = await scanWebDAV(config.webdavUrl);
+                flat = [...flat, ...flattenFiles(webdavFiles)];
+            } catch { }
+        }
+        return json(flat);
     }
 
     if (path === "/api/files/play-all" && method === "POST") {
@@ -519,7 +621,7 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         const { deviceIP, shuffle } = body;
         if (!deviceIP) return json({ error: "deviceIP required" }, 400);
 
-        const files = await scanMusicDir(config.musicDir);
+        const localFiles = markLocalSource(await scanMusicDir(config.musicDir));
         const flattenFiles = (entries: FileEntry[]): FileEntry[] => {
             const result: FileEntry[] = [];
             for (const e of entries) {
@@ -531,7 +633,13 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
             }
             return result;
         };
-        let allFiles = flattenFiles(files);
+        let allFiles = flattenFiles(localFiles);
+        if (config.webdavUrl) {
+            try {
+                const webdavFiles = await scanWebDAV(config.webdavUrl);
+                allFiles = [...allFiles, ...flattenFiles(webdavFiles)];
+            } catch { }
+        }
         if (shuffle) {
             // Fisher-Yates shuffle
             for (let i = allFiles.length - 1; i > 0; i--) {
@@ -544,7 +652,9 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         try {
             await device.flush();
             for (const file of allFiles) {
-                const musicUrl = `http://${LOCAL_IP}:${PORT}/api/music/${encodeURIComponent(file.path)}`;
+                const musicUrl = file.source === "webdav"
+                    ? `http://${LOCAL_IP}:${PORT}/api/webdav-music/${encodeURIComponent(file.path)}`
+                    : `http://${LOCAL_IP}:${PORT}/api/music/${encodeURIComponent(file.path)}`;
                 await device.queue(musicUrl);
             }
             await device.selectQueue();
@@ -557,10 +667,12 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
 
     if (path === "/api/files/play" && method === "POST") {
         const body = await parseBody(req);
-        const { filePath, deviceIP } = body;
+        const { filePath, deviceIP, source } = body;
         if (!filePath || !deviceIP) return json({ error: "filePath and deviceIP required" }, 400);
 
-        const musicUrl = `http://${LOCAL_IP}:${PORT}/api/music/${encodeURIComponent(filePath)}`;
+        const musicUrl = source === "webdav"
+            ? `http://${LOCAL_IP}:${PORT}/api/webdav-music/${encodeURIComponent(filePath)}`
+            : `http://${LOCAL_IP}:${PORT}/api/music/${encodeURIComponent(filePath)}`;
         const device = getSonosDevice(deviceIP);
         try {
             await device.play(musicUrl);
@@ -595,26 +707,123 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         }
     }
 
+    // ── WebDAV music proxy streaming ──
+    if (path.startsWith("/api/webdav-music/")) {
+        if (!config.webdavUrl) return json({ error: "WebDAV not configured" }, 400);
+        const filePath = decodeURIComponent(path.replace("/api/webdav-music/", ""));
+        const baseUrl = config.webdavUrl.endsWith("/") ? config.webdavUrl : config.webdavUrl + "/";
+        const fileUrl = baseUrl + filePath.split("/").map(encodeURIComponent).join("/");
+
+        try {
+            const headers: Record<string, string> = {};
+            if (config.webdavUsername) {
+                headers["Authorization"] = `Basic ${btoa(`${config.webdavUsername}:${config.webdavPassword || ""}`)}`;
+            }
+            // Forward range header for seeking
+            const rangeHeader = req.headers.get("Range");
+            if (rangeHeader) headers["Range"] = rangeHeader;
+
+            const upstream = await fetch(fileUrl, { headers });
+            if (!upstream.ok) return json({ error: "WebDAV fetch failed" }, upstream.status);
+
+            const ext = extname(filePath).toLowerCase();
+            const mimeMap: Record<string, string> = {
+                ".mp3": "audio/mpeg", ".flac": "audio/flac", ".m4a": "audio/mp4",
+                ".aac": "audio/aac", ".ogg": "audio/ogg", ".wav": "audio/wav",
+                ".wma": "audio/x-ms-wma", ".aiff": "audio/aiff", ".alac": "audio/mp4",
+            };
+
+            const respHeaders: Record<string, string> = {
+                "Content-Type": mimeMap[ext] || upstream.headers.get("Content-Type") || "audio/mpeg",
+                "Access-Control-Allow-Origin": "*",
+                "Accept-Ranges": "bytes",
+            };
+            const cl = upstream.headers.get("Content-Length");
+            if (cl) respHeaders["Content-Length"] = cl;
+            const cr = upstream.headers.get("Content-Range");
+            if (cr) respHeaders["Content-Range"] = cr;
+
+            return new Response(upstream.body, {
+                status: upstream.status,
+                headers: respHeaders,
+            });
+        } catch (err: any) {
+            return json({ error: "WebDAV stream error: " + err.message }, 500);
+        }
+    }
+
+    // ── WebDAV test connection ──
+    if (path === "/api/webdav/test" && method === "POST") {
+        const body = await parseBody(req);
+        const { url, username, password } = body;
+        if (!url) return json({ error: "url required" }, 400);
+        try {
+            const headers: Record<string, string> = {
+                "Content-Type": "application/xml; charset=utf-8",
+                "Depth": "0",
+            };
+            if (username) {
+                headers["Authorization"] = `Basic ${btoa(`${username}:${password || ""}`)}`;
+            }
+            const res = await fetch(url.endsWith("/") ? url : url + "/", {
+                method: "PROPFIND",
+                headers,
+                body: `<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>`,
+            });
+            if (res.ok || res.status === 207) {
+                return json({ ok: true, status: res.status });
+            }
+            return json({ ok: false, error: `HTTP ${res.status} ${res.statusText}` });
+        } catch (err: any) {
+            return json({ ok: false, error: err.message });
+        }
+    }
+
     // ── Config routes ──
     if (path === "/api/config" && method === "GET") {
-        return json(config);
+        // Don't expose password in full
+        const safeConfig = {
+            ...config,
+            webdavPassword: config.webdavPassword ? "********" : "",
+        };
+        return json(safeConfig);
     }
 
     if (path === "/api/config" && method === "PUT") {
         const body = await parseBody(req);
+        let changed = false;
+
         if (body.musicDir) {
             // Validate directory exists
             try {
                 const s = await stat(body.musicDir);
                 if (!s.isDirectory()) return json({ error: "Not a directory" }, 400);
                 config.musicDir = body.musicDir;
-                await saveJSON(CONFIG_PATH, config);
-                return json({ ok: true, config });
+                changed = true;
             } catch {
                 return json({ error: "Directory does not exist" }, 400);
             }
         }
-        return json({ error: "musicDir required" }, 400);
+
+        // WebDAV config update
+        if (body.webdavUrl !== undefined) {
+            config.webdavUrl = body.webdavUrl || "";
+            changed = true;
+        }
+        if (body.webdavUsername !== undefined) {
+            config.webdavUsername = body.webdavUsername || "";
+            changed = true;
+        }
+        if (body.webdavPassword !== undefined && body.webdavPassword !== "********") {
+            config.webdavPassword = body.webdavPassword || "";
+            changed = true;
+        }
+
+        if (changed) {
+            await saveJSON(CONFIG_PATH, config);
+            return json({ ok: true, config: { ...config, webdavPassword: config.webdavPassword ? "********" : "" } });
+        }
+        return json({ error: "No valid fields to update" }, 400);
     }
 
     // ── Playlist routes ──
@@ -654,7 +863,9 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
             try {
                 await device.flush();
                 for (const track of playlist.tracks) {
-                    const musicUrl = `http://${LOCAL_IP}:${PORT}/api/music/${encodeURIComponent(track.path)}`;
+                    const musicUrl = (track as any).source === "webdav"
+                        ? `http://${LOCAL_IP}:${PORT}/api/webdav-music/${encodeURIComponent(track.path)}`
+                        : `http://${LOCAL_IP}:${PORT}/api/music/${encodeURIComponent(track.path)}`;
                     await device.queue(musicUrl);
                 }
                 await device.selectQueue();

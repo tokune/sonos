@@ -600,6 +600,19 @@ body {
   text-overflow: ellipsis;
 }
 
+.webdav-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(0, 184, 148, 0.15);
+  color: #00b894;
+  letter-spacing: 0.3px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 .all-music-count {
   font-size: 13px;
   color: var(--text-secondary);

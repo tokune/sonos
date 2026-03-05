@@ -369,6 +369,27 @@
             <p class="form-hint">设置本地音乐文件所在的目录路径</p>
           </div>
           <div class="form-group">
+            <label>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                style="vertical-align: -2px; margin-right: 4px;">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              </svg>
+              WebDAV 音乐源
+            </label>
+            <div class="input-row" style="margin-bottom:8px;">
+              <input type="text" id="webdavUrlInput" placeholder="https://your-server.com/dav/music" class="input">
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+              <input type="text" id="webdavUsernameInput" placeholder="用户名 (可选)" class="input" style="flex:1;">
+              <input type="password" id="webdavPasswordInput" placeholder="密码 (可选)" class="input" style="flex:1;">
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button id="testWebdavBtn" class="btn">测试连接</button>
+              <button id="saveWebdavBtn" class="btn primary">保存 WebDAV</button>
+            </div>
+            <div id="webdavStatus" class="form-hint" style="margin-top:6px;"></div>
+          </div>
+          <div class="form-group">
             <label>服务器信息</label>
             <div class="info-grid">
               <div class="info-item"><span class="info-label">地址</span><span class="info-value" id="serverAddr">-</span>
