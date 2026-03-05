@@ -13,6 +13,52 @@ const AUDIO_EXTENSIONS = new Set([
     ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".wav", ".wma", ".aiff", ".alac",
 ]);
 
+const YOUTUBE_REGEX = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)([\w-]{11})/;
+const BILIBILI_REGEX = /(?:bilibili\.com\/video\/|b23\.tv\/)/;
+
+function isYouTubeUrl(url: string): boolean {
+    return YOUTUBE_REGEX.test(url);
+}
+
+function isBilibiliUrl(url: string): boolean {
+    return BILIBILI_REGEX.test(url);
+}
+
+function isAudioUrl(url: string): boolean {
+    try {
+        const parsed = new URL(url);
+        const ext = parsed.pathname.split(".").pop()?.toLowerCase() || "";
+        return AUDIO_EXTENSIONS.has(`.${ext}`);
+    } catch {
+        return false;
+    }
+}
+
+async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; title: string }> {
+    const proc = Bun.spawn(["yt-dlp", "-g", "-f", "bestaudio", "--get-title", url], {
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+        throw new Error(stderr.trim() || "yt-dlp failed");
+    }
+
+    const lines = stdout.trim().split("\n").filter(Boolean);
+    if (lines.length < 2) {
+        throw new Error("yt-dlp returned unexpected output");
+    }
+
+    return {
+        title: lines[0],
+        audioUrl: lines[1],
+    };
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────
 function getLocalIP(): string {
     const nets = networkInterfaces();
@@ -323,6 +369,73 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
                     return json({ error: "uri required" }, 400);
                 }
                 break;
+        }
+    }
+
+    // ── URL play routes ──
+    if (path === "/api/url/info" && method === "POST") {
+        const body = await parseBody(req);
+        const { url } = body;
+        if (!url) return json({ error: "url required" }, 400);
+
+        let type = "unknown";
+        let title = "";
+
+        if (isYouTubeUrl(url)) {
+            type = "youtube";
+            try {
+                const info = await extractYouTubeAudio(url);
+                title = info.title;
+            } catch {
+                title = "YouTube Video";
+            }
+        } else if (isBilibiliUrl(url)) {
+            type = "bilibili";
+            try {
+                const info = await extractYouTubeAudio(url);
+                title = info.title;
+            } catch {
+                title = "Bilibili Video";
+            }
+        } else if (isAudioUrl(url)) {
+            type = "audio";
+            try {
+                const parsed = new URL(url);
+                title = decodeURIComponent(parsed.pathname.split("/").pop() || url);
+            } catch {
+                title = url;
+            }
+        }
+
+        return json({ type, title, url });
+    }
+
+    if (path === "/api/url/play" && method === "POST") {
+        const body = await parseBody(req);
+        const { url, deviceIP } = body;
+        if (!url || !deviceIP) return json({ error: "url and deviceIP required" }, 400);
+
+        const device = getSonosDevice(deviceIP);
+
+        try {
+            let playUrl = url;
+            let title = url;
+
+            if (isYouTubeUrl(url) || isBilibiliUrl(url)) {
+                const info = await extractYouTubeAudio(url);
+                playUrl = info.audioUrl;
+                title = info.title;
+            } else if (isAudioUrl(url)) {
+                try {
+                    const parsed = new URL(url);
+                    title = decodeURIComponent(parsed.pathname.split("/").pop() || url);
+                } catch { }
+            }
+
+            await device.play(playUrl);
+            return json({ ok: true, title, playUrl });
+        } catch (err: any) {
+            return json({ error: err.message }, 500);
         }
     }
 

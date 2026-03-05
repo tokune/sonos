@@ -1475,6 +1475,240 @@ body {
   }
 }
 
+/* ─── URL Play View ──────────────────────────────── */
+.url-play-container {
+  max-width: 640px;
+  margin: 0 auto 32px;
+}
+
+.url-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 6px 6px 6px 16px;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.url-input-wrapper:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.url-type-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: all var(--transition);
+}
+
+.url-type-badge.youtube {
+  color: #ff0000;
+  background: rgba(255, 0, 0, 0.1);
+}
+
+.url-type-badge.audio {
+  color: var(--accent-light);
+  background: var(--accent-glow);
+}
+
+.url-type-badge.bilibili {
+  color: #00a1d6;
+  background: rgba(0, 161, 214, 0.1);
+}
+
+.url-input {
+  flex: 1;
+  border: none !important;
+  background: transparent !important;
+  padding: 10px 8px !important;
+  font-size: 15px;
+  min-width: 0;
+}
+
+.url-input:focus {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.url-play-btn {
+  padding: 10px 20px !important;
+  border-radius: var(--radius-md) !important;
+  font-size: 14px !important;
+  font-weight: 600;
+  flex-shrink: 0;
+  gap: 8px !important;
+}
+
+.url-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 10px;
+  text-align: center;
+}
+
+.url-status {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: slideUp 0.2s ease;
+}
+
+.url-status.loading {
+  background: rgba(108, 92, 231, 0.1);
+  border: 1px solid rgba(108, 92, 231, 0.2);
+  color: var(--accent-light);
+}
+
+.url-status.success {
+  background: rgba(46, 213, 115, 0.1);
+  border: 1px solid rgba(46, 213, 115, 0.2);
+  color: var(--success);
+}
+
+.url-status.error {
+  background: rgba(255, 71, 87, 0.1);
+  border: 1px solid rgba(255, 71, 87, 0.2);
+  color: var(--danger);
+}
+
+.url-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--accent-glow);
+  border-top-color: var(--accent-light);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ─── URL History ────────────────────────────────── */
+.url-history-section {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.url-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.url-history-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.url-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.url-history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.url-history-item:hover {
+  background: var(--surface-hover);
+}
+
+.url-history-type {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+.url-history-type.youtube {
+  background: rgba(255, 0, 0, 0.1);
+  color: #ff0000;
+}
+
+.url-history-type.audio {
+  background: var(--accent-glow);
+  color: var(--accent-light);
+}
+
+.url-history-type.bilibili {
+  background: rgba(0, 161, 214, 0.1);
+  color: #00a1d6;
+}
+
+.url-history-type.unknown {
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.url-history-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.url-history-title {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.url-history-url {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.url-history-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--transition);
+  flex-shrink: 0;
+}
+
+.url-history-item:hover .url-history-actions {
+  opacity: 1;
+}
+
+.url-history-empty {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* ─── Small phones ───────────────────────────────── */
 @media (max-width: 380px) {
   .control-buttons {

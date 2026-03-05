@@ -81,6 +81,12 @@
         confirmCreatePlaylist: $("#confirmCreatePlaylist"),
         sidebarPlaylists: $("#sidebarPlaylists"),
         playlistList: $("#playlistList"),
+        urlInput: $("#urlInput"),
+        playUrlBtn: $("#playUrlBtn"),
+        urlTypeBadge: $("#urlTypeBadge"),
+        urlStatus: $("#urlStatus"),
+        urlHistory: $("#urlHistory"),
+        clearUrlHistory: $("#clearUrlHistory"),
     };
 
     // ─── Toast ───────────────────────────────────────────────────
@@ -112,6 +118,163 @@
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
         return (bytes / 1048576).toFixed(1) + " MB";
+    }
+
+    // ─── URL Type Detection ──────────────────────────────────────
+    const YOUTUBE_REGEX = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)/;
+    const BILIBILI_REGEX = /(?:bilibili\.com\/video\/|b23\.tv\/)/;
+
+    function detectUrlType(url) {
+        if (!url) return "unknown";
+        if (YOUTUBE_REGEX.test(url)) return "youtube";
+        if (BILIBILI_REGEX.test(url)) return "bilibili";
+        const audioExts = [".mp3", ".flac", ".m4a", ".aac", ".ogg", ".wav", ".wma", ".aiff"];
+        try {
+            const pathname = new URL(url).pathname.toLowerCase();
+            if (audioExts.some((ext) => pathname.endsWith(ext))) return "audio";
+        } catch { }
+        return "unknown";
+    }
+
+    function updateUrlBadge(url) {
+        const type = detectUrlType(url);
+        els.urlTypeBadge.className = "url-type-badge";
+        if (type === "youtube") {
+            els.urlTypeBadge.className = "url-type-badge youtube";
+            els.urlTypeBadge.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0C.488 3.45.029 5.804 0 12c.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0C23.512 20.55 23.971 18.196 24 12c-.029-6.185-.484-8.549-4.385-8.816zM9 16V8l8 4-8 4z"/></svg>`;
+        } else if (type === "bilibili") {
+            els.urlTypeBadge.className = "url-type-badge bilibili";
+            els.urlTypeBadge.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.813 4.653h.854c1.51.054 2.769.578 3.773 1.574 1.004.995 1.524 2.249 1.56 3.76v7.36c-.036 1.51-.556 2.769-1.56 3.773s-2.262 1.524-3.773 1.56H5.333c-1.51-.036-2.769-.556-3.773-1.56S.036 18.858 0 17.347v-7.36c.036-1.511.556-2.765 1.56-3.76 1.004-.996 2.262-1.52 3.773-1.574h.774l-1.174-1.12a1.234 1.234 0 0 1-.373-.906c0-.356.124-.658.373-.907l.027-.027c.267-.249.573-.373.92-.373.347 0 .653.124.92.373L9.653 4.44c.071.071.134.142.187.213h4.267a.836.836 0 0 1 .16-.213l2.853-2.747c.267-.249.573-.373.92-.373.347 0 .662.151.929.4.267.249.391.551.391.907 0 .355-.124.657-.373.906L17.813 4.653zM5.333 7.24c-.746.018-1.373.276-1.88.773-.506.498-.769 1.13-.786 1.894v7.52c.017.764.28 1.395.786 1.893.507.498 1.134.756 1.88.773h13.334c.746-.017 1.373-.275 1.88-.773.506-.498.769-1.129.786-1.893v-7.52c-.017-.765-.28-1.396-.786-1.894-.507-.497-1.134-.755-1.88-.773H5.333zM8 11.107c.373 0 .684.124.933.373.25.249.383.569.4.96v1.173c-.017.391-.15.711-.4.96-.249.25-.56.374-.933.374s-.684-.125-.933-.374c-.25-.249-.383-.569-.4-.96V12.44c.017-.391.15-.711.4-.96.249-.249.56-.373.933-.373zm8 0c.373 0 .684.124.933.373.25.249.383.569.4.96v1.173c-.017.391-.15.711-.4.96-.249.25-.56.374-.933.374s-.684-.125-.933-.374c-.25-.249-.383-.569-.4-.96V12.44c.017-.391.15-.711.4-.96.249-.249.56-.373.933-.373z"/></svg>`;
+        } else if (type === "audio") {
+            els.urlTypeBadge.className = "url-type-badge audio";
+            els.urlTypeBadge.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
+        } else {
+            els.urlTypeBadge.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
+        }
+    }
+
+    function setUrlStatus(type, message) {
+        els.urlStatus.style.display = "flex";
+        els.urlStatus.className = `url-status ${type}`;
+        if (type === "loading") {
+            els.urlStatus.innerHTML = `<div class="url-spinner"></div><span>${message}</span>`;
+        } else {
+            els.urlStatus.innerHTML = `<span>${message}</span>`;
+        }
+        if (type === "success") {
+            setTimeout(() => { els.urlStatus.style.display = "none"; }, 3000);
+        }
+    }
+
+    // ─── URL History (localStorage) ──────────────────────────────
+    const URL_HISTORY_KEY = "sonos_url_history";
+    const MAX_HISTORY = 20;
+
+    function getUrlHistory() {
+        try {
+            return JSON.parse(localStorage.getItem(URL_HISTORY_KEY) || "[]");
+        } catch { return []; }
+    }
+
+    function saveUrlHistory(history) {
+        localStorage.setItem(URL_HISTORY_KEY, JSON.stringify(history));
+    }
+
+    function addUrlToHistory(url, title, type) {
+        let history = getUrlHistory();
+        // Remove duplicate
+        history = history.filter((h) => h.url !== url);
+        // Add to front
+        history.unshift({ url, title, type, time: Date.now() });
+        // Limit
+        if (history.length > MAX_HISTORY) history = history.slice(0, MAX_HISTORY);
+        saveUrlHistory(history);
+        renderUrlHistory();
+    }
+
+    function renderUrlHistory() {
+        const history = getUrlHistory();
+        if (history.length === 0) {
+            els.urlHistory.innerHTML = '<div class="url-history-empty">暂无播放历史</div>';
+            return;
+        }
+
+        els.urlHistory.innerHTML = history
+            .map((h, i) => {
+                const typeIcon = h.type === "youtube" ? "▶" : h.type === "bilibili" ? "▶" : h.type === "audio" ? "♪" : "🔗";
+                return `
+                <div class="url-history-item" data-url="${h.url.replace(/"/g, '&quot;')}" data-idx="${i}">
+                    <div class="url-history-type ${h.type || 'unknown'}">${typeIcon}</div>
+                    <div class="url-history-info">
+                        <div class="url-history-title">${h.title || h.url}</div>
+                        <div class="url-history-url">${h.url}</div>
+                    </div>
+                    <div class="url-history-actions">
+                        <button class="btn sm primary history-play" data-url="${h.url.replace(/"/g, '&quot;')}">▶</button>
+                        <button class="btn sm danger history-remove" data-idx="${i}">✕</button>
+                    </div>
+                </div>`;
+            })
+            .join("");
+
+        // Bind history item events
+        els.urlHistory.querySelectorAll(".history-play").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                els.urlInput.value = btn.dataset.url;
+                updateUrlBadge(btn.dataset.url);
+                playUrl(btn.dataset.url);
+            });
+        });
+
+        els.urlHistory.querySelectorAll(".history-remove").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const history = getUrlHistory();
+                history.splice(parseInt(btn.dataset.idx), 1);
+                saveUrlHistory(history);
+                renderUrlHistory();
+            });
+        });
+
+        els.urlHistory.querySelectorAll(".url-history-item").forEach((item) => {
+            item.addEventListener("click", () => {
+                els.urlInput.value = item.dataset.url;
+                updateUrlBadge(item.dataset.url);
+            });
+        });
+    }
+
+    // ─── Play URL ────────────────────────────────────────────────
+    async function playUrl(url) {
+        if (!url) {
+            toast("请输入URL", "error");
+            return;
+        }
+        if (!state.selectedDevice) {
+            toast("请先选择设备", "error");
+            return;
+        }
+
+        const type = detectUrlType(url);
+        const needsExtract = type === "youtube" || type === "bilibili";
+        setUrlStatus("loading", needsExtract ? `正在解析 ${type === "bilibili" ? "Bilibili" : "YouTube"} 音频...` : "正在推送到设备...");
+
+        try {
+            const res = await api.post("/api/url/play", { url, deviceIP: state.selectedDevice });
+            if (res.error) {
+                setUrlStatus("error", res.error);
+                toast("播放失败: " + res.error, "error");
+                return;
+            }
+            setUrlStatus("success", `正在播放: ${res.title || url}`);
+            toast("开始播放", "success");
+            addUrlToHistory(url, res.title || url, type);
+            setTimeout(pollState, 500);
+        } catch (err) {
+            setUrlStatus("error", "播放失败: " + err.message);
+            toast("播放失败: " + err.message, "error");
+        }
     }
 
     // ─── Device Management ──────────────────────────────────────
@@ -939,6 +1102,8 @@
             if (!state.selectedPlaylist) renderPlaylistsGrid();
         } else if (view === "queue") {
             loadQueue();
+        } else if (view === "url") {
+            renderUrlHistory();
         }
     }
 
@@ -1011,6 +1176,27 @@
             if (seeking) {
                 els.currentTime.textContent = formatTime(parseInt(els.progressBar.value));
             }
+        });
+
+        // URL play
+        els.playUrlBtn.addEventListener("click", () => {
+            playUrl(els.urlInput.value.trim());
+        });
+
+        els.urlInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") playUrl(els.urlInput.value.trim());
+        });
+
+        let urlDebounce;
+        els.urlInput.addEventListener("input", () => {
+            clearTimeout(urlDebounce);
+            urlDebounce = setTimeout(() => updateUrlBadge(els.urlInput.value.trim()), 150);
+        });
+
+        els.clearUrlHistory.addEventListener("click", () => {
+            saveUrlHistory([]);
+            renderUrlHistory();
+            toast("播放历史已清空", "success");
         });
 
         // ─── Mobile: sidebar toggle ──────────────────────────
