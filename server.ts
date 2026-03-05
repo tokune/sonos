@@ -16,6 +16,17 @@ const AUDIO_EXTENSIONS = new Set([
 const YOUTUBE_REGEX = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)([\w-]{11})/;
 const BILIBILI_REGEX = /(?:bilibili\.com\/video\/|b23\.tv\/)/;
 
+// ─── YouTube/Bilibili stream proxy cache ──────────────────────────
+const ytStreams = new Map<string, { audioUrl: string; title: string; createdAt: number }>();
+const YT_STREAM_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+function cleanupExpiredStreams() {
+    const now = Date.now();
+    for (const [id, entry] of ytStreams) {
+        if (now - entry.createdAt > YT_STREAM_TTL_MS) ytStreams.delete(id);
+    }
+}
+
 function isYouTubeUrl(url: string): boolean {
     return YOUTUBE_REGEX.test(url);
 }
@@ -39,7 +50,7 @@ async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; tit
         "yt-dlp",
         "--js-runtimes", "bun",
         "--remote-components", "ejs:github",
-        "-g", "-f", "bestaudio", "--get-title", url
+        "-g", "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio", "--get-title", url
     ];
 
     let cookieFile = "";
@@ -592,7 +603,11 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
 
             if (isYouTubeUrl(url) || isBilibiliUrl(url)) {
                 const info = await extractYouTubeAudio(url);
-                playUrl = info.audioUrl;
+                // Create a proxy stream so we can transcode to MP3 for Sonos
+                const streamId = crypto.randomUUID();
+                cleanupExpiredStreams();
+                ytStreams.set(streamId, { audioUrl: info.audioUrl, title: info.title, createdAt: Date.now() });
+                playUrl = `http://${LOCAL_IP}:${PORT}/api/youtube-stream/${streamId}`;
                 title = info.title;
             } else if (isAudioUrl(url)) {
                 try {
@@ -605,6 +620,39 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
             return json({ ok: true, title, playUrl });
         } catch (err: any) {
             return json({ error: err.message }, 500);
+        }
+    }
+
+    // ── YouTube/Bilibili proxy stream (transcode to MP3 for Sonos) ──
+    const ytStreamMatch = path.match(/^\/api\/youtube-stream\/([^/]+)$/);
+    if (ytStreamMatch) {
+        const streamId = ytStreamMatch[1];
+        const entry = ytStreams.get(streamId);
+        if (!entry) return json({ error: "Stream expired or not found" }, 404);
+
+        try {
+            const proc = Bun.spawn([
+                "ffmpeg",
+                "-i", entry.audioUrl,
+                "-f", "mp3",
+                "-ab", "192k",
+                "-vn",
+                "-loglevel", "error",
+                "pipe:1",
+            ], {
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+
+            return new Response(proc.stdout, {
+                headers: {
+                    "Content-Type": "audio/mpeg",
+                    "Access-Control-Allow-Origin": "*",
+                    "Transfer-Encoding": "chunked",
+                },
+            });
+        } catch (err: any) {
+            return json({ error: "Stream error: " + err.message }, 500);
         }
     }
 
