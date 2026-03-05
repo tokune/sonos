@@ -346,6 +346,7 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 /* ─── Breadcrumb ─────────────────────────────────── */
@@ -714,6 +715,7 @@ body {
   padding: 10px 16px;
   border-radius: var(--radius-md);
   transition: all var(--transition);
+  cursor: pointer;
 }
 
 .queue-item:hover {
@@ -722,6 +724,12 @@ body {
 
 .queue-item.playing {
   background: var(--accent-glow);
+  border-left: 3px solid var(--accent-light);
+}
+
+.queue-item.playing .queue-item-name {
+  color: var(--accent-light);
+  font-weight: 500;
 }
 
 .queue-item-num {
@@ -729,16 +737,76 @@ body {
   text-align: center;
   font-size: 12px;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .queue-item-name {
   flex: 1;
   font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .queue-item-artist {
   font-size: 12px;
   color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.queue-item-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--transition);
+  flex-shrink: 0;
+}
+
+.queue-item:hover .queue-item-actions {
+  opacity: 1;
+}
+
+.queue-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.queue-action-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.queue-play-btn:hover {
+  color: var(--accent-light);
+  background: var(--accent-glow);
+}
+
+.queue-remove-btn:hover {
+  color: var(--danger);
+  background: rgba(255, 71, 87, 0.15);
+}
+
+/* Shuffle active state */
+.btn.active,
+#shuffleQueueBtn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 12px var(--accent-glow);
 }
 
 /* ─── Player Bar ─────────────────────────────────── */

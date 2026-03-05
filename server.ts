@@ -369,6 +369,59 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
                     return json({ error: "uri required" }, 400);
                 }
                 break;
+            case "queue/remove":
+                if (method === "POST") {
+                    const body = await parseBody(req);
+                    const trackNum = body.index;
+                    if (trackNum === undefined) return json({ error: "index required" }, 400);
+                    try {
+                        // removeTracksFromQueue expects track number (1-based)
+                        await (device as any).removeTracksFromQueue(trackNum + 1, 1);
+                        return json({ ok: true });
+                    } catch (err: any) {
+                        return json({ error: err.message }, 500);
+                    }
+                }
+                break;
+            case "queue/shuffle":
+                if (method === "POST") {
+                    const body = await parseBody(req);
+                    const shuffle = body.shuffle ?? true;
+                    try {
+                        // Use setPlayMode to toggle shuffle
+                        const mode = shuffle ? "SHUFFLE" : "NORMAL";
+                        await (device as any).setPlayMode(mode);
+                        return json({ ok: true, mode });
+                    } catch (err: any) {
+                        return json({ error: err.message }, 500);
+                    }
+                }
+                break;
+            case "queue/playindex":
+                if (method === "POST") {
+                    const body = await parseBody(req);
+                    const idx = body.index;
+                    if (idx === undefined) return json({ error: "index required" }, 400);
+                    try {
+                        // selectTrack expects 1-based index
+                        await (device as any).selectTrack(idx + 1);
+                        await device.play();
+                        return json({ ok: true });
+                    } catch (err: any) {
+                        return json({ error: err.message }, 500);
+                    }
+                }
+                break;
+            case "playmode":
+                if (method === "GET") {
+                    try {
+                        const mode = await (device as any).getPlayMode();
+                        return json({ mode });
+                    } catch (err: any) {
+                        return json({ mode: "NORMAL" });
+                    }
+                }
+                break;
         }
     }
 

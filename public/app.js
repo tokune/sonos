@@ -88,6 +88,10 @@
         playlistViewTitle: $("#playlistViewTitle"),
         queueContent: $("#queueContent"),
         clearQueueBtn: $("#clearQueueBtn"),
+        prevQueueBtn: $("#prevQueueBtn"),
+        nextQueueBtn: $("#nextQueueBtn"),
+        shuffleQueueBtn: $("#shuffleQueueBtn"),
+        refreshQueueBtn: $("#refreshQueueBtn"),
         playerBar: $("#playerBar"),
         trackArt: $("#trackArt"),
         trackTitle: $("#trackTitle"),
@@ -1084,7 +1088,16 @@
             return;
         }
         try {
-            const queue = await api.get(`/api/devices/${encodeURIComponent(state.selectedDevice)}/queue`);
+            const [queue, playmodeRes] = await Promise.all([
+                api.get(`/api/devices/${encodeURIComponent(state.selectedDevice)}/queue`),
+                api.get(`/api/devices/${encodeURIComponent(state.selectedDevice)}/playmode`),
+            ]);
+            // Update shuffle button state
+            const mode = playmodeRes?.mode || "NORMAL";
+            const isShuffled = mode.includes("SHUFFLE");
+            if (els.shuffleQueueBtn) {
+                els.shuffleQueueBtn.classList.toggle("active", isShuffled);
+            }
             renderQueue(queue);
         } catch (err) {
             els.queueContent.innerHTML = '<div class="empty-state"><p>加载队列失败</p></div>';
@@ -1098,16 +1111,77 @@
             return;
         }
 
+        // Determine currently playing track position from state
+        const currentUri = state.playState?.track?.uri || "";
+
         els.queueContent.innerHTML = items
             .map(
-                (item, i) => `
-      <div class="queue-item">
-        <span class="queue-item-num">${i + 1}</span>
-        <span class="queue-item-name">${item.title || item.Title || "未知"}</span>
-        <span class="queue-item-artist">${item.artist || item.Artist || ""}</span>
-      </div>`
+                (item, i) => {
+                    const title = item.title || item.Title || "未知";
+                    const artist = item.artist || item.Artist || "";
+                    const uri = item.uri || item.Uri || "";
+                    const isPlaying = currentUri && uri && currentUri === uri;
+                    return `
+      <div class="queue-item${isPlaying ? " playing" : ""}" data-index="${i}">
+        <span class="queue-item-num">${isPlaying ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="var(--accent-light)"><polygon points="5 3 19 12 5 21 5 3"/></svg>' : (i + 1)}</span>
+        <span class="queue-item-name">${title}</span>
+        <span class="queue-item-artist">${artist}</span>
+        <div class="queue-item-actions">
+          <button class="queue-action-btn queue-play-btn" data-index="${i}" title="播放此曲">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          </button>
+          <button class="queue-action-btn queue-remove-btn" data-index="${i}" title="从队列移除">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>`;
+                }
             )
             .join("");
+
+        // Bind play-at-index
+        els.queueContent.querySelectorAll(".queue-play-btn").forEach((btn) => {
+            btn.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                if (!state.selectedDevice) return;
+                try {
+                    await api.post(`/api/devices/${encodeURIComponent(state.selectedDevice)}/queue/playindex`, { index: parseInt(btn.dataset.index) });
+                    toast("正在播放", "success");
+                    setTimeout(() => { pollState(); loadQueue(); }, 500);
+                } catch (err) {
+                    toast("播放失败: " + err.message, "error");
+                }
+            });
+        });
+
+        // Bind remove from queue
+        els.queueContent.querySelectorAll(".queue-remove-btn").forEach((btn) => {
+            btn.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                if (!state.selectedDevice) return;
+                try {
+                    await api.post(`/api/devices/${encodeURIComponent(state.selectedDevice)}/queue/remove`, { index: parseInt(btn.dataset.index) });
+                    toast("已从队列移除", "success");
+                    loadQueue();
+                } catch (err) {
+                    toast("移除失败: " + err.message, "error");
+                }
+            });
+        });
+
+        // Click on queue item to play it
+        els.queueContent.querySelectorAll(".queue-item").forEach((item) => {
+            item.addEventListener("click", async () => {
+                if (!state.selectedDevice) return;
+                try {
+                    await api.post(`/api/devices/${encodeURIComponent(state.selectedDevice)}/queue/playindex`, { index: parseInt(item.dataset.index) });
+                    toast("正在播放", "success");
+                    setTimeout(() => { pollState(); loadQueue(); }, 500);
+                } catch (err) {
+                    toast("播放失败: " + err.message, "error");
+                }
+            });
+        });
     }
 
     // ─── View Switching ──────────────────────────────────────────
@@ -1340,6 +1414,50 @@
             } catch (err) {
                 toast("清空失败: " + err.message, "error");
             }
+        });
+
+        // Previous track in queue
+        els.prevQueueBtn?.addEventListener("click", async () => {
+            if (!state.selectedDevice) { toast("请先选择设备", "error"); return; }
+            try {
+                await playerControl("previous");
+                toast("上一首", "success");
+                setTimeout(loadQueue, 800);
+            } catch (err) {
+                toast("操作失败: " + err.message, "error");
+            }
+        });
+
+        // Next track in queue
+        els.nextQueueBtn?.addEventListener("click", async () => {
+            if (!state.selectedDevice) { toast("请先选择设备", "error"); return; }
+            try {
+                await playerControl("next");
+                toast("下一首", "success");
+                setTimeout(loadQueue, 800);
+            } catch (err) {
+                toast("操作失败: " + err.message, "error");
+            }
+        });
+
+        // Shuffle queue
+        els.shuffleQueueBtn?.addEventListener("click", async () => {
+            if (!state.selectedDevice) { toast("请先选择设备", "error"); return; }
+            const isCurrentlyShuffled = els.shuffleQueueBtn.classList.contains("active");
+            try {
+                await api.post(`/api/devices/${encodeURIComponent(state.selectedDevice)}/queue/shuffle`, { shuffle: !isCurrentlyShuffled });
+                els.shuffleQueueBtn.classList.toggle("active", !isCurrentlyShuffled);
+                toast(!isCurrentlyShuffled ? "随机播放已开启" : "随机播放已关闭", "success");
+                setTimeout(loadQueue, 500);
+            } catch (err) {
+                toast("操作失败: " + err.message, "error");
+            }
+        });
+
+        // Refresh queue
+        els.refreshQueueBtn?.addEventListener("click", () => {
+            loadQueue();
+            toast("队列已刷新", "info");
         });
     }
 
