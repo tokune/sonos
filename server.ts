@@ -17,13 +17,18 @@ const YOUTUBE_REGEX = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be
 const BILIBILI_REGEX = /(?:bilibili\.com\/video\/|b23\.tv\/)/;
 
 // ─── YouTube/Bilibili stream proxy cache ──────────────────────────
-const ytStreams = new Map<string, { audioUrl: string; title: string; createdAt: number }>();
+const ytStreams = new Map<string, { filePath: string; title: string; createdAt: number }>();
 const YT_STREAM_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const YT_CACHE_DIR = join(import.meta.dir, "data", "yt-cache");
 
 function cleanupExpiredStreams() {
     const now = Date.now();
     for (const [id, entry] of ytStreams) {
-        if (now - entry.createdAt > YT_STREAM_TTL_MS) ytStreams.delete(id);
+        if (now - entry.createdAt > YT_STREAM_TTL_MS) {
+            // Clean up temp file
+            try { Bun.file(entry.filePath).exists().then(async (e: boolean): Promise<void> => { if (e) await Bun.file(entry.filePath).delete(); }); } catch { }
+            ytStreams.delete(id);
+        }
     }
 }
 
@@ -57,12 +62,10 @@ async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; tit
     if (config.youtubeCookies && isYouTubeUrl(url)) {
         cookieFile = join(DATA_DIR, ".youtube_cookies.txt");
         await writeFile(cookieFile, config.youtubeCookies, "utf-8");
-        // Insert cookies args before the -g flag
         args.splice(3, 0, "--cookies", cookieFile);
     } else if (config.bilibiliCookies && isBilibiliUrl(url)) {
         cookieFile = join(DATA_DIR, ".bilibili_cookies.txt");
         await writeFile(cookieFile, config.bilibiliCookies, "utf-8");
-        // Insert cookies args before the -g flag
         args.splice(3, 0, "--cookies", cookieFile);
     }
 
@@ -76,7 +79,6 @@ async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; tit
     const exitCode = await proc.exited;
 
     if (cookieFile) {
-        // Clean up temporary cookies file
         try {
             const f = Bun.file(cookieFile);
             if (await f.exists()) await f.delete();
@@ -96,6 +98,58 @@ async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; tit
         title: lines[0],
         audioUrl: lines[1],
     };
+}
+
+async function downloadYouTubeAudio(url: string): Promise<{ filePath: string; title: string }> {
+    await ensureDir(YT_CACHE_DIR);
+    const streamId = crypto.randomUUID();
+    const outputPath = join(YT_CACHE_DIR, `${streamId}.mp3`);
+
+    const args = [
+        "yt-dlp",
+        "--js-runtimes", "bun",
+        "--remote-components", "ejs:github",
+        "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
+        "--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K",
+        "--get-title",
+        "-o", outputPath,
+        url
+    ];
+
+    let cookieFile = "";
+    if (config.youtubeCookies && isYouTubeUrl(url)) {
+        cookieFile = join(DATA_DIR, ".youtube_cookies.txt");
+        await writeFile(cookieFile, config.youtubeCookies, "utf-8");
+        args.splice(3, 0, "--cookies", cookieFile);
+    } else if (config.bilibiliCookies && isBilibiliUrl(url)) {
+        cookieFile = join(DATA_DIR, ".bilibili_cookies.txt");
+        await writeFile(cookieFile, config.bilibiliCookies, "utf-8");
+        args.splice(3, 0, "--cookies", cookieFile);
+    }
+
+    const proc = Bun.spawn(args, {
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (cookieFile) {
+        try {
+            const f = Bun.file(cookieFile);
+            if (await f.exists()) await f.delete();
+        } catch { }
+    }
+
+    if (exitCode !== 0) {
+        throw new Error(stderr.trim() || "yt-dlp download failed");
+    }
+
+    const title = stdout.trim().split("\n").filter(Boolean)[0] || "Unknown";
+
+    return { filePath: outputPath, title };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -602,12 +656,12 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
             let title = url;
 
             if (isYouTubeUrl(url) || isBilibiliUrl(url)) {
-                const info = await extractYouTubeAudio(url);
-                // Create a proxy stream so we can transcode to MP3 for Sonos
+                // Download and transcode to MP3 file for Sonos compatibility
+                const info = await downloadYouTubeAudio(url);
                 const streamId = crypto.randomUUID();
                 cleanupExpiredStreams();
-                ytStreams.set(streamId, { audioUrl: info.audioUrl, title: info.title, createdAt: Date.now() });
-                playUrl = `http://${LOCAL_IP}:${PORT}/api/youtube-stream/${streamId}`;
+                ytStreams.set(streamId, { filePath: info.filePath, title: info.title, createdAt: Date.now() });
+                playUrl = `http://${LOCAL_IP}:${PORT}/api/youtube-stream/${streamId}.mp3`;
                 title = info.title;
             } else if (isAudioUrl(url)) {
                 try {
@@ -616,39 +670,31 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
                 } catch { }
             }
 
-            await device.play(playUrl);
+            // Use setAVTransportURI with metadata for better Sonos compatibility
+            const metadata = `<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="yt-stream" parentID="0" restricted="true"><dc:title>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="http-get:*:audio/mpeg:*">${playUrl}</res></item></DIDL-Lite>`;
+            await (device as any).setAVTransportURI({ uri: playUrl, metadata });
             return json({ ok: true, title, playUrl });
         } catch (err: any) {
             return json({ error: err.message }, 500);
         }
     }
 
-    // ── YouTube/Bilibili proxy stream (transcode to MP3 for Sonos) ──
-    const ytStreamMatch = path.match(/^\/api\/youtube-stream\/([^/]+)$/);
+    // ── YouTube/Bilibili audio file serving ──
+    const ytStreamMatch = path.match(/^\/api\/youtube-stream\/([^/.]+)\.mp3$/);
     if (ytStreamMatch) {
         const streamId = ytStreamMatch[1];
-        const entry = ytStreams.get(streamId);
+        const entry = ytStreams.get(streamId!);
         if (!entry) return json({ error: "Stream expired or not found" }, 404);
 
         try {
-            const proc = Bun.spawn([
-                "ffmpeg",
-                "-i", entry.audioUrl,
-                "-f", "mp3",
-                "-ab", "192k",
-                "-vn",
-                "-loglevel", "error",
-                "pipe:1",
-            ], {
-                stdout: "pipe",
-                stderr: "pipe",
-            });
-
-            return new Response(proc.stdout, {
+            const file = Bun.file(entry.filePath);
+            if (!(await file.exists())) return json({ error: "Audio file not found" }, 404);
+            return new Response(file, {
                 headers: {
                     "Content-Type": "audio/mpeg",
+                    "Content-Length": String(file.size),
                     "Access-Control-Allow-Origin": "*",
-                    "Transfer-Encoding": "chunked",
+                    "Accept-Ranges": "bytes",
                 },
             });
         } catch (err: any) {
