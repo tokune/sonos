@@ -113,8 +113,8 @@ async function downloadYouTubeAudio(url: string): Promise<{ filePath: string; ti
         "--js-runtimes", "bun",
         "--remote-components", "ejs:github",
         "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
+        "--print", "title",
         "--print", "ext",
-        "--get-title",
         url
     ];
 
@@ -137,6 +137,7 @@ async function downloadYouTubeAudio(url: string): Promise<{ filePath: string; ti
     await queryProc.exited;
 
     const queryLines = queryOut.trim().split("\n").filter(Boolean);
+    // --print title outputs first, --print ext outputs second
     const title = queryLines[0] || "Unknown";
     const sourceExt = (queryLines[1] || "").toLowerCase();
     const needsTranscode = !SONOS_AUDIO_EXTS.has(sourceExt);
