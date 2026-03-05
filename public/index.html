@@ -376,16 +376,27 @@
               </svg>
               WebDAV 音乐源
             </label>
-            <div class="input-row" style="margin-bottom:8px;">
-              <input type="text" id="webdavUrlInput" placeholder="https://your-server.com/dav/music" class="input">
-            </div>
+            <p class="form-hint" style="margin-bottom:8px;">先填写服务器地址和凭据，再点击「浏览」选择音乐目录</p>
             <div style="display:flex;gap:8px;margin-bottom:8px;">
-              <input type="text" id="webdavUsernameInput" placeholder="用户名 (可选)" class="input" style="flex:1;">
-              <input type="password" id="webdavPasswordInput" placeholder="密码 (可选)" class="input" style="flex:1;">
+              <input type="text" id="webdavServerInput" placeholder="https://your-server.com/dav" class="input"
+                style="flex:2;">
+              <input type="text" id="webdavUsernameInput" placeholder="用户名" class="input" style="flex:1;">
+              <input type="password" id="webdavPasswordInput" placeholder="密码" class="input" style="flex:1;">
+            </div>
+            <div class="input-row" style="margin-bottom:8px;">
+              <input type="text" id="webdavUrlInput" placeholder="点击「浏览」选择音乐目录..." class="input" readonly
+                style="cursor:pointer;background:var(--bg-tertiary);">
+              <button id="browseWebdavBtn" class="btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+                浏览
+              </button>
             </div>
             <div style="display:flex;gap:8px;">
               <button id="testWebdavBtn" class="btn">测试连接</button>
               <button id="saveWebdavBtn" class="btn primary">保存 WebDAV</button>
+              <button id="clearWebdavBtn" class="btn danger">清除</button>
             </div>
             <div id="webdavStatus" class="form-hint" style="margin-top:6px;"></div>
           </div>
@@ -437,6 +448,28 @@
           <div class="modal-footer">
             <button id="confirmModalCancel" class="btn">取消</button>
             <button id="confirmModalOk" class="btn danger">确认删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- WebDAV Browse Modal -->
+    <div class="modal-overlay" id="webdavBrowseModal" style="display:none">
+      <div class="modal glass" style="max-width:520px;">
+        <div class="modal-header">
+          <h3>选择 WebDAV 音乐目录</h3>
+          <button class="icon-btn close-modal" data-modal="webdavBrowseModal">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div id="webdavBrowseBreadcrumb" class="breadcrumb" style="margin-bottom:12px;flex-wrap:wrap;"></div>
+          <div id="webdavBrowseInfo" class="form-hint" style="margin-bottom:8px;"></div>
+          <div id="webdavBrowseList" class="webdav-browse-list" style="max-height:320px;overflow-y:auto;"></div>
+          <div class="modal-footer" style="margin-top:16px;">
+            <button id="webdavBrowseSelect" class="btn primary">选择当前目录</button>
           </div>
         </div>
       </div>

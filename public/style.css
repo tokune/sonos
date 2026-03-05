@@ -613,6 +613,46 @@ body {
   vertical-align: middle;
 }
 
+.webdav-browse-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.webdav-browse-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition);
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.webdav-browse-item:hover {
+  background: var(--surface-hover);
+}
+
+.webdav-browse-item .folder-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 165, 2, 0.15);
+  color: var(--warning);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.webdav-browse-item .arrow {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 18px;
+}
+
 .all-music-count {
   font-size: 13px;
   color: var(--text-secondary);

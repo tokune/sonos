@@ -779,6 +779,60 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         }
     }
 
+    // ── WebDAV browse directories ──
+    if (path === "/api/webdav/browse" && method === "POST") {
+        const body = await parseBody(req);
+        const { url, username, password } = body;
+        if (!url) return json({ error: "url required" }, 400);
+        try {
+            const headers: Record<string, string> = {
+                "Content-Type": "application/xml; charset=utf-8",
+                "Depth": "1",
+            };
+            if (username) {
+                headers["Authorization"] = `Basic ${btoa(`${username}:${password || ""}`)}`;
+            }
+            const targetUrl = url.endsWith("/") ? url : url + "/";
+            const res = await fetch(targetUrl, {
+                method: "PROPFIND",
+                headers,
+                body: `<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:displayname/></d:prop></d:propfind>`,
+            });
+            if (!res.ok && res.status !== 207) {
+                return json({ ok: false, error: `HTTP ${res.status}` });
+            }
+            const xml = await res.text();
+            const allResponses = xml.split(/<(?:d:|D:)?response>/i).slice(1).map(r => r.split(/<\/(?:d:|D:)?response>/i)[0] || r);
+
+            const dirs: { name: string; path: string }[] = [];
+            let audioCount = 0;
+            const normalizedUrl = new URL(targetUrl).pathname.replace(/\/+$/, "");
+
+            for (const item of allResponses) {
+                const hrefMatch = item.match(/<(?:d:|D:)?href>([^<]+)<\/(?:d:|D:)?href>/i);
+                if (!hrefMatch) continue;
+                const href = decodeURIComponent(hrefMatch[1]);
+                const normalizedHref = href.replace(/\/+$/, "");
+                if (normalizedHref === normalizedUrl || normalizedHref === "") continue;
+
+                const isCollection = /<(?:d:|D:)?collection/i.test(item);
+                const name = href.replace(/\/$/, "").split("/").pop() || "";
+                if (!name || name.startsWith(".")) continue;
+
+                if (isCollection) {
+                    dirs.push({ name, path: targetUrl + encodeURIComponent(name) + "/" });
+                } else if (AUDIO_EXTENSIONS.has(extname(name).toLowerCase())) {
+                    audioCount++;
+                }
+            }
+
+            dirs.sort((a, b) => a.name.localeCompare(b.name));
+            return json({ ok: true, dirs, audioCount, currentUrl: targetUrl });
+        } catch (err: any) {
+            return json({ ok: false, error: err.message });
+        }
+    }
+
     // ── Config routes ──
     if (path === "/api/config" && method === "GET") {
         // Don't expose password in full

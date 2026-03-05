@@ -127,11 +127,19 @@
         playAllMusicBtn: $("#playAllMusicBtn"),
         shuffleAllMusicBtn: $("#shuffleAllMusicBtn"),
         webdavUrlInput: $("#webdavUrlInput"),
+        webdavServerInput: $("#webdavServerInput"),
         webdavUsernameInput: $("#webdavUsernameInput"),
         webdavPasswordInput: $("#webdavPasswordInput"),
         testWebdavBtn: $("#testWebdavBtn"),
         saveWebdavBtn: $("#saveWebdavBtn"),
+        clearWebdavBtn: $("#clearWebdavBtn"),
+        browseWebdavBtn: $("#browseWebdavBtn"),
         webdavStatus: $("#webdavStatus"),
+        webdavBrowseModal: $("#webdavBrowseModal"),
+        webdavBrowseList: $("#webdavBrowseList"),
+        webdavBrowseBreadcrumb: $("#webdavBrowseBreadcrumb"),
+        webdavBrowseInfo: $("#webdavBrowseInfo"),
+        webdavBrowseSelect: $("#webdavBrowseSelect"),
     };
 
     // ─── Toast ───────────────────────────────────────────────────
@@ -1354,10 +1362,23 @@
             els.serverAddr.textContent = `${location.hostname}:${location.port || 80}`;
             // WebDAV fields
             if (els.webdavUrlInput) els.webdavUrlInput.value = cfg.webdavUrl || "";
+            // Extract server base from webdavUrl for the server input
+            if (els.webdavServerInput) {
+                if (cfg.webdavUrl) {
+                    try {
+                        const u = new URL(cfg.webdavUrl);
+                        els.webdavServerInput.value = u.origin;
+                    } catch {
+                        els.webdavServerInput.value = cfg.webdavUrl || "";
+                    }
+                } else {
+                    els.webdavServerInput.value = "";
+                }
+            }
             if (els.webdavUsernameInput) els.webdavUsernameInput.value = cfg.webdavUsername || "";
             if (els.webdavPasswordInput) els.webdavPasswordInput.value = cfg.webdavPassword === "********" ? "" : (cfg.webdavPassword || "");
             if (els.webdavPasswordInput && cfg.webdavPassword === "********") els.webdavPasswordInput.placeholder = "密码已保存 (留空则不修改)";
-            if (els.webdavStatus) els.webdavStatus.textContent = cfg.webdavUrl ? "已配置 WebDAV" : "";
+            if (els.webdavStatus) els.webdavStatus.textContent = cfg.webdavUrl ? "已配置: " + cfg.webdavUrl : "";
         } catch { }
     }
 
@@ -1484,8 +1505,9 @@
 
         // WebDAV test connection
         els.testWebdavBtn?.addEventListener("click", async () => {
-            const url = els.webdavUrlInput.value.trim();
-            if (!url) { toast("请输入 WebDAV 地址", "error"); return; }
+            const serverUrl = els.webdavServerInput.value.trim();
+            const url = els.webdavUrlInput.value.trim() || serverUrl;
+            if (!url) { toast("请先填写 WebDAV 服务器地址", "error"); return; }
             els.webdavStatus.textContent = "正在测试连接...";
             els.webdavStatus.style.color = "var(--text-muted)";
             try {
@@ -1510,9 +1532,110 @@
             }
         });
 
+        // WebDAV browse directory
+        let webdavBrowseCurrentUrl = "";
+        let webdavBrowseHistory = []; // array of {url, name}
+
+        async function webdavBrowseTo(url) {
+            els.webdavBrowseList.innerHTML = '<div class="empty-state"><p>加载中...</p></div>';
+            els.webdavBrowseInfo.textContent = "";
+            try {
+                const res = await api.post("/api/webdav/browse", {
+                    url,
+                    username: els.webdavUsernameInput.value.trim(),
+                    password: els.webdavPasswordInput.value,
+                });
+                if (!res.ok) {
+                    els.webdavBrowseList.innerHTML = `<div class="empty-state"><p>加载失败: ${res.error || '未知错误'}</p></div>`;
+                    return;
+                }
+                webdavBrowseCurrentUrl = res.currentUrl || url;
+                const info = [];
+                if (res.dirs.length > 0) info.push(`${res.dirs.length} 个子目录`);
+                if (res.audioCount > 0) info.push(`${res.audioCount} 个音频文件`);
+                els.webdavBrowseInfo.textContent = info.join("，") || "此目录为空";
+
+                // Render breadcrumb
+                renderBrowseBreadcrumb();
+
+                // Render directory list
+                if (res.dirs.length === 0) {
+                    els.webdavBrowseList.innerHTML = '<div class="empty-state" style="padding:20px 0;"><p>无子目录</p>' +
+                        (res.audioCount > 0 ? `<p class="hint">此目录包含 ${res.audioCount} 个音频文件，可直接选择</p>` : '') + '</div>';
+                    return;
+                }
+
+                els.webdavBrowseList.innerHTML = res.dirs.map(d => `
+                    <div class="webdav-browse-item" data-url="${d.path}">
+                        <div class="folder-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                        </div>
+                        <span>${d.name}</span>
+                        <span class="arrow">›</span>
+                    </div>
+                `).join("");
+
+                els.webdavBrowseList.querySelectorAll(".webdav-browse-item").forEach(item => {
+                    item.addEventListener("click", () => {
+                        const dirUrl = item.dataset.url;
+                        const dirName = item.querySelector("span").textContent;
+                        webdavBrowseHistory.push({ url: webdavBrowseCurrentUrl, name: dirName });
+                        webdavBrowseTo(dirUrl);
+                    });
+                });
+            } catch (err) {
+                els.webdavBrowseList.innerHTML = `<div class="empty-state"><p>加载失败: ${err.message}</p></div>`;
+            }
+        }
+
+        function renderBrowseBreadcrumb() {
+            const parts = [{ url: els.webdavServerInput.value.trim(), name: "根目录" }, ...webdavBrowseHistory];
+            els.webdavBrowseBreadcrumb.innerHTML = parts.map((p, i) => {
+                const isLast = i === parts.length - 1;
+                return (i > 0 ? '<span class="breadcrumb-sep">/</span>' : '') +
+                    `<button class="breadcrumb-item${isLast ? '' : ''}" data-bc-idx="${i}">${p.name}</button>`;
+            }).join("");
+
+            els.webdavBrowseBreadcrumb.querySelectorAll(".breadcrumb-item").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const idx = parseInt(btn.dataset.bcIdx);
+                    const targetUrl = parts[idx].url;
+                    webdavBrowseHistory = webdavBrowseHistory.slice(0, idx);
+                    webdavBrowseTo(targetUrl);
+                });
+            });
+        }
+
+        els.browseWebdavBtn?.addEventListener("click", () => {
+            const serverUrl = els.webdavServerInput.value.trim();
+            if (!serverUrl) {
+                toast("请先填写 WebDAV 服务器地址", "error");
+                return;
+            }
+            webdavBrowseHistory = [];
+            webdavBrowseCurrentUrl = serverUrl;
+            els.webdavBrowseModal.style.display = "flex";
+            webdavBrowseTo(serverUrl);
+        });
+
+        els.webdavUrlInput?.addEventListener("click", () => {
+            if (els.webdavServerInput.value.trim()) {
+                els.browseWebdavBtn.click();
+            }
+        });
+
+        els.webdavBrowseSelect?.addEventListener("click", () => {
+            if (webdavBrowseCurrentUrl) {
+                els.webdavUrlInput.value = webdavBrowseCurrentUrl;
+                els.webdavBrowseModal.style.display = "none";
+                toast("已选择目录", "success");
+            }
+        });
+
         // WebDAV save
         els.saveWebdavBtn?.addEventListener("click", async () => {
             const url = els.webdavUrlInput.value.trim();
+            if (!url) { toast("请先浏览选择一个 WebDAV 目录", "error"); return; }
             const username = els.webdavUsernameInput.value.trim();
             const password = els.webdavPasswordInput.value;
             try {
@@ -1522,14 +1645,35 @@
                 if (res.error) {
                     toast(res.error, "error");
                 } else {
-                    toast(url ? "WebDAV 设置已保存" : "WebDAV 已清除", "success");
-                    els.webdavStatus.textContent = url ? "已配置 WebDAV" : "";
+                    toast("WebDAV 设置已保存", "success");
+                    els.webdavStatus.textContent = "已配置: " + url;
                     els.webdavStatus.style.color = "var(--text-muted)";
                     loadFiles();
                     if (state.currentView === "allMusic") loadAllMusic();
                 }
             } catch (err) {
                 toast("保存失败: " + err.message, "error");
+            }
+        });
+
+        // WebDAV clear
+        els.clearWebdavBtn?.addEventListener("click", async () => {
+            try {
+                const res = await api.put("/api/config", { webdavUrl: "", webdavUsername: "", webdavPassword: "" });
+                if (res.error) {
+                    toast(res.error, "error");
+                } else {
+                    els.webdavUrlInput.value = "";
+                    els.webdavServerInput.value = "";
+                    els.webdavUsernameInput.value = "";
+                    els.webdavPasswordInput.value = "";
+                    els.webdavStatus.textContent = "";
+                    toast("WebDAV 已清除", "success");
+                    loadFiles();
+                    if (state.currentView === "allMusic") loadAllMusic();
+                }
+            } catch (err) {
+                toast("清除失败: " + err.message, "error");
             }
         });
 
