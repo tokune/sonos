@@ -9,6 +9,7 @@
         playState: null,
         files: [],
         playlists: [],
+        allMusic: [],
         currentView: "files",
         currentPath: [], // breadcrumb path segments
         currentFiles: [], // files at current path level
@@ -121,6 +122,10 @@
         urlStatus: $("#urlStatus"),
         urlHistory: $("#urlHistory"),
         clearUrlHistory: $("#clearUrlHistory"),
+        allMusicList: $("#allMusicList"),
+        allMusicCount: $("#allMusicCount"),
+        playAllMusicBtn: $("#playAllMusicBtn"),
+        shuffleAllMusicBtn: $("#shuffleAllMusicBtn"),
     };
 
     // ─── Toast ───────────────────────────────────────────────────
@@ -889,6 +894,110 @@
         }
     }
 
+    // ─── All Music ────────────────────────────────────────────────
+    async function loadAllMusic() {
+        try {
+            state.allMusic = await api.get("/api/files/all");
+            renderAllMusic();
+        } catch (err) {
+            toast("加载全部音乐失败: " + err.message, "error");
+        }
+    }
+
+    function renderAllMusic() {
+        const list = state.allMusic || [];
+        els.allMusicCount.textContent = list.length > 0 ? `${list.length} 首歌曲` : "";
+
+        if (list.length === 0) {
+            els.allMusicList.innerHTML = `
+        <div class="empty-state">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          <p>暂无音乐文件</p>
+          <p class="hint">在设置中配置音乐目录</p>
+        </div>`;
+            return;
+        }
+
+        const itemsHTML = list
+            .map((f, i) => {
+                const dirHint = f.path.includes("/") ? f.path.substring(0, f.path.lastIndexOf("/")) : "";
+                return `
+          <div class="file-item" data-allmusic-idx="${i}">
+            <div class="all-music-number">${i + 1}</div>
+            <div class="file-icon audio">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            </div>
+            <div class="all-music-info">
+              <span class="file-name">${f.name}</span>
+              ${dirHint ? `<span class="all-music-dir">${dirHint}</span>` : ""}
+            </div>
+            <span class="file-size">${formatSize(f.size)}</span>
+            <div class="file-actions">
+              <button class="btn sm primary play-all-music-file" data-path="${f.path}" title="播放">▶ 播放</button>
+              <button class="btn sm add-to-playlist-allmusic" data-path="${f.path}" data-name="${f.name}" data-size="${f.size || 0}" title="添加到播放列表">+ 列表</button>
+            </div>
+          </div>`;
+            })
+            .join("");
+
+        els.allMusicList.innerHTML = itemsHTML;
+
+        // Play individual file
+        els.allMusicList.querySelectorAll(".play-all-music-file").forEach((btn) => {
+            btn.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                if (!state.selectedDevice) {
+                    toast("请先选择设备", "error");
+                    return;
+                }
+                try {
+                    await api.post("/api/files/play", {
+                        filePath: btn.dataset.path,
+                        deviceIP: state.selectedDevice,
+                    });
+                    toast("开始播放", "success");
+                    setTimeout(pollState, 500);
+                } catch (err) {
+                    toast("播放失败: " + err.message, "error");
+                }
+            });
+        });
+
+        // Add to playlist
+        els.allMusicList.querySelectorAll(".add-to-playlist-allmusic").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showAddToPlaylistMenu(btn, {
+                    path: btn.dataset.path,
+                    name: btn.dataset.name,
+                    size: parseInt(btn.dataset.size) || 0,
+                });
+            });
+        });
+    }
+
+    async function playAllMusic(shuffle = false) {
+        if (!state.selectedDevice) {
+            toast("请先选择设备", "error");
+            return;
+        }
+        try {
+            toast(shuffle ? "正在随机加载全部音乐..." : "正在加载全部音乐...", "info");
+            const res = await api.post("/api/files/play-all", {
+                deviceIP: state.selectedDevice,
+                shuffle,
+            });
+            if (res.error) {
+                toast("播放失败: " + res.error, "error");
+                return;
+            }
+            toast(`正在播放 ${res.count} 首歌曲`, "success");
+            setTimeout(pollState, 500);
+        } catch (err) {
+            toast("播放失败: " + err.message, "error");
+        }
+    }
+
     // ─── Playlists ───────────────────────────────────────────────
     async function loadPlaylists() {
         try {
@@ -1203,7 +1312,9 @@
         closeMobileSidebar();
 
         // Load view-specific data
-        if (view === "playlists") {
+        if (view === "allMusic") {
+            loadAllMusic();
+        } else if (view === "playlists") {
             if (!state.selectedPlaylist) renderPlaylistsGrid();
         } else if (view === "queue") {
             loadQueue();
@@ -1459,6 +1570,10 @@
             loadQueue();
             toast("队列已刷新", "info");
         });
+
+        // All Music controls
+        els.playAllMusicBtn?.addEventListener("click", () => playAllMusic(false));
+        els.shuffleAllMusicBtn?.addEventListener("click", () => playAllMusic(true));
     }
 
     // ─── Init ────────────────────────────────────────────────────

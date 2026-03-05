@@ -498,6 +498,63 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         return json(files);
     }
 
+    if (path === "/api/files/all" && method === "GET") {
+        const files = await scanMusicDir(config.musicDir);
+        const flattenFiles = (entries: FileEntry[]): FileEntry[] => {
+            const result: FileEntry[] = [];
+            for (const e of entries) {
+                if (e.isDir && e.children) {
+                    result.push(...flattenFiles(e.children));
+                } else if (!e.isDir) {
+                    result.push(e);
+                }
+            }
+            return result;
+        };
+        return json(flattenFiles(files));
+    }
+
+    if (path === "/api/files/play-all" && method === "POST") {
+        const body = await parseBody(req);
+        const { deviceIP, shuffle } = body;
+        if (!deviceIP) return json({ error: "deviceIP required" }, 400);
+
+        const files = await scanMusicDir(config.musicDir);
+        const flattenFiles = (entries: FileEntry[]): FileEntry[] => {
+            const result: FileEntry[] = [];
+            for (const e of entries) {
+                if (e.isDir && e.children) {
+                    result.push(...flattenFiles(e.children));
+                } else if (!e.isDir) {
+                    result.push(e);
+                }
+            }
+            return result;
+        };
+        let allFiles = flattenFiles(files);
+        if (shuffle) {
+            // Fisher-Yates shuffle
+            for (let i = allFiles.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [allFiles[i], allFiles[j]] = [allFiles[j]!, allFiles[i]!];
+            }
+        }
+
+        const device = getSonosDevice(deviceIP);
+        try {
+            await device.flush();
+            for (const file of allFiles) {
+                const musicUrl = `http://${LOCAL_IP}:${PORT}/api/music/${encodeURIComponent(file.path)}`;
+                await device.queue(musicUrl);
+            }
+            await device.selectQueue();
+            await device.play();
+            return json({ ok: true, count: allFiles.length });
+        } catch (err: any) {
+            return json({ error: err.message }, 500);
+        }
+    }
+
     if (path === "/api/files/play" && method === "POST") {
         const body = await parseBody(req);
         const { filePath, deviceIP } = body;
