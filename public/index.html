@@ -401,6 +401,20 @@
             <div id="webdavStatus" class="form-hint" style="margin-top:6px;"></div>
           </div>
           <div class="form-group">
+            <label>YouTube Cookies (可选)</label>
+            <textarea id="youtubeCookiesInput" class="input" rows="4" placeholder="在此粘贴 cookies.txt 的内容..."></textarea>
+            <button id="saveYoutubeCookiesBtn" class="btn primary" style="margin-top: 8px;">保存 YouTube Cookies</button>
+            <p class="form-hint" style="margin-top: 8px;">如果遇到机器人验证错误，请使用浏览器插件（如 Get cookies.txt）导出文本格式的 Cookies
+              并粘贴到此处。点击保存生效。</p>
+          </div>
+          <div class="form-group">
+            <label>Bilibili Cookies (可选)</label>
+            <textarea id="bilibiliCookiesInput" class="input" rows="4" placeholder="在此粘贴 cookies.txt 的内容..."></textarea>
+            <button id="saveBilibiliCookiesBtn" class="btn primary" style="margin-top: 8px;">保存 Bilibili
+              Cookies</button>
+            <p class="form-hint" style="margin-top: 8px;">导出和填写方式与 YouTube 相同，用于 Bilibili 高画质/会员权限解析。</p>
+          </div>
+          <div class="form-group">
             <label>服务器信息</label>
             <div class="info-grid">
               <div class="info-item"><span class="info-label">地址</span><span class="info-value" id="serverAddr">-</span>

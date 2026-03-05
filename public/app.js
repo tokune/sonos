@@ -140,6 +140,10 @@
         webdavBrowseBreadcrumb: $("#webdavBrowseBreadcrumb"),
         webdavBrowseInfo: $("#webdavBrowseInfo"),
         webdavBrowseSelect: $("#webdavBrowseSelect"),
+        youtubeCookiesInput: $("#youtubeCookiesInput"),
+        saveYoutubeCookiesBtn: $("#saveYoutubeCookiesBtn"),
+        bilibiliCookiesInput: $("#bilibiliCookiesInput"),
+        saveBilibiliCookiesBtn: $("#saveBilibiliCookiesBtn"),
     };
 
     // ─── Toast ───────────────────────────────────────────────────
@@ -1384,6 +1388,8 @@
             if (els.webdavPasswordInput) els.webdavPasswordInput.value = cfg.webdavPassword === "********" ? "" : (cfg.webdavPassword || "");
             if (els.webdavPasswordInput && cfg.webdavPassword === "********") els.webdavPasswordInput.placeholder = "密码已保存 (留空则不修改)";
             if (els.webdavStatus) els.webdavStatus.textContent = cfg.webdavUrl ? "已配置: " + cfg.webdavUrl : "";
+            if (els.youtubeCookiesInput) els.youtubeCookiesInput.value = cfg.youtubeCookies || "";
+            if (els.bilibiliCookiesInput) els.bilibiliCookiesInput.value = cfg.bilibiliCookies || "";
         } catch { }
     }
 
@@ -1502,6 +1508,36 @@
                 } else {
                     toast("音乐目录已更新", "success");
                     loadFiles();
+                }
+            } catch (err) {
+                toast("保存失败: " + err.message, "error");
+            }
+        });
+
+        // Save YouTube Cookies
+        els.saveYoutubeCookiesBtn?.addEventListener("click", async () => {
+            const cookies = els.youtubeCookiesInput.value.trim();
+            try {
+                const res = await api.put("/api/config", { youtubeCookies: cookies });
+                if (res.error) {
+                    toast(res.error, "error");
+                } else {
+                    toast("YouTube Cookies 已保存", "success");
+                }
+            } catch (err) {
+                toast("保存失败: " + err.message, "error");
+            }
+        });
+
+        // Save Bilibili Cookies
+        els.saveBilibiliCookiesBtn?.addEventListener("click", async () => {
+            const cookies = els.bilibiliCookiesInput.value.trim();
+            try {
+                const res = await api.put("/api/config", { bilibiliCookies: cookies });
+                if (res.error) {
+                    toast(res.error, "error");
+                } else {
+                    toast("Bilibili Cookies 已保存", "success");
                 }
             } catch (err) {
                 toast("保存失败: " + err.message, "error");

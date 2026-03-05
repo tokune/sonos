@@ -35,7 +35,26 @@ function isAudioUrl(url: string): boolean {
 }
 
 async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; title: string }> {
-    const proc = Bun.spawn(["yt-dlp", "-g", "-f", "bestaudio", "--get-title", url], {
+    const args = [
+        "yt-dlp",
+        "--js-runtimes", "bun",
+        "-g", "-f", "bestaudio", "--get-title", url
+    ];
+
+    let cookieFile = "";
+    if (config.youtubeCookies && isYouTubeUrl(url)) {
+        cookieFile = join(DATA_DIR, ".youtube_cookies.txt");
+        await writeFile(cookieFile, config.youtubeCookies, "utf-8");
+        // Insert cookies args before the -g flag
+        args.splice(3, 0, "--cookies", cookieFile);
+    } else if (config.bilibiliCookies && isBilibiliUrl(url)) {
+        cookieFile = join(DATA_DIR, ".bilibili_cookies.txt");
+        await writeFile(cookieFile, config.bilibiliCookies, "utf-8");
+        // Insert cookies args before the -g flag
+        args.splice(3, 0, "--cookies", cookieFile);
+    }
+
+    const proc = Bun.spawn(args, {
         stdout: "pipe",
         stderr: "pipe",
     });
@@ -43,6 +62,14 @@ async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; tit
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
+
+    if (cookieFile) {
+        // Clean up temporary cookies file
+        try {
+            const f = Bun.file(cookieFile);
+            if (await f.exists()) await f.delete();
+        } catch { }
+    }
 
     if (exitCode !== 0) {
         throw new Error(stderr.trim() || "yt-dlp failed");
@@ -95,6 +122,8 @@ interface AppConfig {
     webdavUrl?: string;
     webdavUsername?: string;
     webdavPassword?: string;
+    youtubeCookies?: string;
+    bilibiliCookies?: string;
 }
 
 interface Playlist {
@@ -843,6 +872,8 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         const safeConfig = {
             ...config,
             webdavPassword: config.webdavPassword ? "********" : "",
+            youtubeCookies: config.youtubeCookies || "",
+            bilibiliCookies: config.bilibiliCookies || "",
         };
         return json(safeConfig);
     }
@@ -874,6 +905,15 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         }
         if (body.webdavPassword !== undefined && body.webdavPassword !== "********") {
             config.webdavPassword = body.webdavPassword || "";
+            changed = true;
+        }
+
+        if (body.youtubeCookies !== undefined) {
+            config.youtubeCookies = body.youtubeCookies || "";
+            changed = true;
+        }
+        if (body.bilibiliCookies !== undefined) {
+            config.bilibiliCookies = body.bilibiliCookies || "";
             changed = true;
         }
 
