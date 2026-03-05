@@ -17,7 +17,7 @@ const YOUTUBE_REGEX = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be
 const BILIBILI_REGEX = /(?:bilibili\.com\/video\/|b23\.tv\/)/;
 
 // ─── YouTube/Bilibili stream proxy cache ──────────────────────────
-const ytStreams = new Map<string, { filePath: string; title: string; createdAt: number }>();
+const ytStreams = new Map<string, { filePath: string; title: string; ext: string; createdAt: number }>();
 const YT_STREAM_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const YT_CACHE_DIR = join(import.meta.dir, "data", "yt-cache");
 
@@ -100,56 +100,81 @@ async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; tit
     };
 }
 
-async function downloadYouTubeAudio(url: string): Promise<{ filePath: string; title: string }> {
+async function downloadYouTubeAudio(url: string): Promise<{ filePath: string; title: string; ext: string }> {
     await ensureDir(YT_CACHE_DIR);
     const streamId = crypto.randomUUID();
-    const outputPath = join(YT_CACHE_DIR, `${streamId}.mp3`);
 
-    const args = [
+    // Sonos-compatible audio extensions (no transcoding needed)
+    const SONOS_AUDIO_EXTS = new Set(["m4a", "mp3", "aac", "flac", "ogg", "wav", "wma", "aiff"]);
+
+    // Step 1: Query the best audio format to check if it's already Sonos-compatible
+    const queryArgs = [
         "yt-dlp",
         "--js-runtimes", "bun",
         "--remote-components", "ejs:github",
         "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
-        "--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K",
+        "--print", "ext",
         "--get-title",
-        "-o", outputPath,
         url
     ];
 
     let cookieFile = "";
+    let cookieArgs: string[] = [];
     if (config.youtubeCookies && isYouTubeUrl(url)) {
         cookieFile = join(DATA_DIR, ".youtube_cookies.txt");
         await writeFile(cookieFile, config.youtubeCookies, "utf-8");
-        args.splice(3, 0, "--cookies", cookieFile);
+        cookieArgs = ["--cookies", cookieFile];
+        queryArgs.splice(3, 0, ...cookieArgs);
     } else if (config.bilibiliCookies && isBilibiliUrl(url)) {
         cookieFile = join(DATA_DIR, ".bilibili_cookies.txt");
         await writeFile(cookieFile, config.bilibiliCookies, "utf-8");
-        args.splice(3, 0, "--cookies", cookieFile);
+        cookieArgs = ["--cookies", cookieFile];
+        queryArgs.splice(3, 0, ...cookieArgs);
     }
 
-    const proc = Bun.spawn(args, {
-        stdout: "pipe",
-        stderr: "pipe",
-    });
+    const queryProc = Bun.spawn(queryArgs, { stdout: "pipe", stderr: "pipe" });
+    const queryOut = await new Response(queryProc.stdout).text();
+    await queryProc.exited;
 
-    const stdout = await new Response(proc.stdout).text();
+    const queryLines = queryOut.trim().split("\n").filter(Boolean);
+    const title = queryLines[0] || "Unknown";
+    const sourceExt = (queryLines[1] || "").toLowerCase();
+    const needsTranscode = !SONOS_AUDIO_EXTS.has(sourceExt);
+
+    // Step 2: Download (with or without transcoding)
+    const finalExt = needsTranscode ? "mp3" : sourceExt;
+    const outputPath = join(YT_CACHE_DIR, `${streamId}.${finalExt}`);
+
+    const dlArgs = [
+        "yt-dlp",
+        "--js-runtimes", "bun",
+        "--remote-components", "ejs:github",
+        "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
+        "-o", outputPath,
+        url
+    ];
+    if (cookieArgs.length) dlArgs.splice(3, 0, ...cookieArgs);
+
+    if (needsTranscode) {
+        // Add transcoding flags
+        dlArgs.splice(dlArgs.indexOf("-o"), 0, "--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K");
+    }
+
+    console.log(`[yt-dlp] Downloading: ${title} (source: ${sourceExt}, output: ${finalExt}, transcode: ${needsTranscode})`);
+
+    const proc = Bun.spawn(dlArgs, { stdout: "pipe", stderr: "pipe" });
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
 
     if (cookieFile) {
-        try {
-            const f = Bun.file(cookieFile);
-            if (await f.exists()) await f.delete();
-        } catch { }
+        try { const f = Bun.file(cookieFile); if (await f.exists()) await f.delete(); } catch { }
     }
 
     if (exitCode !== 0) {
         throw new Error(stderr.trim() || "yt-dlp download failed");
     }
 
-    const title = stdout.trim().split("\n").filter(Boolean)[0] || "Unknown";
-
-    return { filePath: outputPath, title };
+    return { filePath: outputPath, title, ext: finalExt };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -656,12 +681,12 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
             let title = url;
 
             if (isYouTubeUrl(url) || isBilibiliUrl(url)) {
-                // Download and transcode to MP3 file for Sonos compatibility
+                // Download (and transcode only if needed) for Sonos compatibility
                 const info = await downloadYouTubeAudio(url);
                 const streamId = crypto.randomUUID();
                 cleanupExpiredStreams();
-                ytStreams.set(streamId, { filePath: info.filePath, title: info.title, createdAt: Date.now() });
-                playUrl = `http://${LOCAL_IP}:${PORT}/api/youtube-stream/${streamId}.mp3`;
+                ytStreams.set(streamId, { filePath: info.filePath, title: info.title, ext: info.ext, createdAt: Date.now() });
+                playUrl = `http://${LOCAL_IP}:${PORT}/api/youtube-stream/${streamId}.${info.ext}`;
                 title = info.title;
             } else if (isAudioUrl(url)) {
                 try {
@@ -670,8 +695,16 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
                 } catch { }
             }
 
+            // Determine MIME type for metadata
+            const mimeTypes: Record<string, string> = {
+                mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/aac",
+                flac: "audio/flac", ogg: "audio/ogg", wav: "audio/wav",
+            };
+            const urlExt = playUrl.split(".").pop()?.toLowerCase() || "";
+            const mimeType = mimeTypes[urlExt] || "audio/mpeg";
+
             // Use setAVTransportURI with metadata for better Sonos compatibility
-            const metadata = `<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="yt-stream" parentID="0" restricted="true"><dc:title>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="http-get:*:audio/mpeg:*">${playUrl}</res></item></DIDL-Lite>`;
+            const metadata = `<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="yt-stream" parentID="0" restricted="true"><dc:title>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="http-get:*:${mimeType}:*">${playUrl}</res></item></DIDL-Lite>`;
             await (device as any).setAVTransportURI({ uri: playUrl, metadata });
             return json({ ok: true, title, playUrl });
         } catch (err: any) {
@@ -680,7 +713,7 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
     }
 
     // ── YouTube/Bilibili audio file serving ──
-    const ytStreamMatch = path.match(/^\/api\/youtube-stream\/([^/.]+)\.mp3$/);
+    const ytStreamMatch = path.match(/^\/api\/youtube-stream\/([^/.]+)\.[a-z0-9]+$/);
     if (ytStreamMatch) {
         const streamId = ytStreamMatch[1];
         const entry = ytStreams.get(streamId!);
@@ -689,9 +722,14 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         try {
             const file = Bun.file(entry.filePath);
             if (!(await file.exists())) return json({ error: "Audio file not found" }, 404);
+            const extMimeMap: Record<string, string> = {
+                mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/aac",
+                flac: "audio/flac", ogg: "audio/ogg", wav: "audio/wav",
+            };
+            const contentType = extMimeMap[entry.ext] || "audio/mpeg";
             return new Response(file, {
                 headers: {
-                    "Content-Type": "audio/mpeg",
+                    "Content-Type": contentType,
                     "Content-Length": String(file.size),
                     "Access-Control-Allow-Origin": "*",
                     "Accept-Ranges": "bytes",
