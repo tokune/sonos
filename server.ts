@@ -38,6 +38,7 @@ async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; tit
     const args = [
         "yt-dlp",
         "--js-runtimes", "bun",
+        "--remote-components", "ejs:github",
         "-g", "-f", "bestaudio", "--get-title", url
     ];
 
