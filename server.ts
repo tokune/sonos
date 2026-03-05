@@ -274,27 +274,25 @@ async function scanWebDAV(davUrl: string, basePath = ""): Promise<FileEntry[]> {
   </d:prop>
 </d:propfind>`,
         });
-        if (!res.ok) return entries;
+        if (!res.ok && res.status !== 207) return entries;
         const xml = await res.text();
 
         // Simple XML parsing for DAV responses
-        const responses = xml.split("<d:response>").slice(1).map(r => r.split("</d:response>")[0] || r);
-        // Also handle uppercase / no-prefix variants
-        const allResponses = xml.split(/<(?:d:|D:)?response>/i).slice(1).map(r => r.split(/<\/(?:d:|D:)?response>/i)[0] || r);
-        const items = allResponses.length > responses.length ? allResponses : responses;
+        // Handle response tags with extra attributes like <D:response xmlns:lp1="DAV:">
+        const allResponses = xml.split(/<(?:d:|D:)?response[\s>]/i).slice(1).map(r => r.split(/<\/(?:d:|D:)?response>/i)[0] || r);
 
-        for (const item of items) {
+        for (const item of allResponses) {
             // Extract href
             const hrefMatch = item.match(/<(?:d:|D:)?href>([^<]+)<\/(?:d:|D:)?href>/i);
             if (!hrefMatch) continue;
-            const href = decodeURIComponent(hrefMatch[1]);
+            const href = decodeURIComponent(hrefMatch[1]!);
 
             // Skip the directory itself (first response is always the requested directory)
             const normalizedUrl = new URL(url).pathname.replace(/\/+$/, "");
             const normalizedHref = href.replace(/\/+$/, "");
             if (normalizedHref === normalizedUrl || normalizedHref === "") continue;
 
-            const isCollection = /<(?:d:|D:)?collection/i.test(item);
+            const isCollection = /<(?:\w+:)?collection/i.test(item);
             const name = href.replace(/\/$/, "").split("/").pop() || "";
             if (!name || name.startsWith(".")) continue;
 
@@ -307,8 +305,8 @@ async function scanWebDAV(davUrl: string, basePath = ""): Promise<FileEntry[]> {
                     entries.push({ name, path: relPath, isDir: true, children, source: "webdav" });
                 }
             } else if (AUDIO_EXTENSIONS.has(extname(name).toLowerCase())) {
-                const sizeMatch = item.match(/<(?:d:|D:)?getcontentlength>([^<]+)<\/(?:d:|D:)?getcontentlength>/i);
-                const size = sizeMatch ? parseInt(sizeMatch[1]) : 0;
+                const sizeMatch = item.match(/<(?:\w+:)?getcontentlength>([^<]+)<\/(?:\w+:)?getcontentlength>/i);
+                const size = sizeMatch ? parseInt(sizeMatch[1]!) : 0;
                 entries.push({ name, path: relPath, isDir: false, size, source: "webdav" });
             }
         }
@@ -802,7 +800,7 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
                 return json({ ok: false, error: `HTTP ${res.status}` });
             }
             const xml = await res.text();
-            const allResponses = xml.split(/<(?:d:|D:)?response>/i).slice(1).map(r => r.split(/<\/(?:d:|D:)?response>/i)[0] || r);
+            const allResponses = xml.split(/<(?:d:|D:)?response[\s>]/i).slice(1).map(r => r.split(/<\/(?:d:|D:)?response>/i)[0] || r);
 
             const dirs: { name: string; path: string }[] = [];
             let audioCount = 0;
@@ -815,7 +813,7 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
                 const normalizedHref = href.replace(/\/+$/, "");
                 if (normalizedHref === normalizedUrl || normalizedHref === "") continue;
 
-                const isCollection = /<(?:d:|D:)?collection/i.test(item);
+                const isCollection = /<(?:\w+:)?collection/i.test(item);
                 const name = href.replace(/\/$/, "").split("/").pop() || "";
                 if (!name || name.startsWith(".")) continue;
 
