@@ -753,7 +753,10 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
     // ── WebDAV test connection ──
     if (path === "/api/webdav/test" && method === "POST") {
         const body = await parseBody(req);
-        const { url, username, password } = body;
+        const url = body.url;
+        // Fall back to stored credentials if not provided
+        const username = body.username || config.webdavUsername || "";
+        const password = (body.password && body.password !== "********") ? body.password : (config.webdavPassword || "");
         if (!url) return json({ error: "url required" }, 400);
         try {
             const headers: Record<string, string> = {
@@ -761,7 +764,7 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
                 "Depth": "0",
             };
             if (username) {
-                headers["Authorization"] = `Basic ${btoa(`${username}:${password || ""}`)}`;
+                headers["Authorization"] = `Basic ${btoa(`${username}:${password}`)}`;
             }
             const res = await fetch(url.endsWith("/") ? url : url + "/", {
                 method: "PROPFIND",
@@ -780,7 +783,10 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
     // ── WebDAV browse directories ──
     if (path === "/api/webdav/browse" && method === "POST") {
         const body = await parseBody(req);
-        const { url, username, password } = body;
+        const url = body.url;
+        // Fall back to stored credentials if not provided
+        const username = body.username || config.webdavUsername || "";
+        const password = (body.password && body.password !== "********") ? body.password : (config.webdavPassword || "");
         if (!url) return json({ error: "url required" }, 400);
         try {
             const headers: Record<string, string> = {
@@ -788,7 +794,7 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
                 "Depth": "1",
             };
             if (username) {
-                headers["Authorization"] = `Basic ${btoa(`${username}:${password || ""}`)}`;
+                headers["Authorization"] = `Basic ${btoa(`${username}:${password}`)}`;
             }
             const targetUrl = url.endsWith("/") ? url : url + "/";
             const res = await fetch(targetUrl, {

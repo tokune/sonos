@@ -556,15 +556,20 @@
         if (paths.length === 0) return;
 
         try {
+            const audioFiles = getAudioFiles(state.currentFiles);
             // Play first file directly, queue the rest
             const device = encodeURIComponent(state.selectedDevice);
             if (paths.length === 1) {
-                await api.post("/api/files/play", { filePath: paths[0], deviceIP: state.selectedDevice });
+                const file = audioFiles.find((f) => f.path === paths[0]);
+                await api.post("/api/files/play", { filePath: paths[0], deviceIP: state.selectedDevice, source: file?.source });
             } else {
                 // Clear queue, add all, play
                 await api.post(`/api/devices/${device}/queue/clear`);
                 for (const p of paths) {
-                    const musicUrl = `http://${location.hostname}:${location.port || 80}/api/music/${encodeURIComponent(p)}`;
+                    const file = audioFiles.find((f) => f.path === p);
+                    const isWebdav = file?.source === "webdav";
+                    const apiPrefix = isWebdav ? "/api/webdav-music/" : "/api/music/";
+                    const musicUrl = `http://${location.hostname}:${location.port || 80}${apiPrefix}${encodeURIComponent(p)}`;
                     await api.post(`/api/devices/${device}/queue/add`, { uri: musicUrl });
                 }
                 await api.post(`/api/devices/${device}/play`);
@@ -651,7 +656,7 @@
             if (pl.tracks.some((t) => t.path === path)) continue;
             const file = audioFiles.find((f) => f.path === path);
             if (!file) continue;
-            pl.tracks.push({ path: file.path, name: file.name, size: file.size || 0 });
+            pl.tracks.push({ path: file.path, name: file.name, size: file.size || 0, source: file.source });
             addedCount++;
         }
 
