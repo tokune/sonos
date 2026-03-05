@@ -95,8 +95,8 @@ async function extractYouTubeAudio(url: string): Promise<{ audioUrl: string; tit
     }
 
     return {
-        title: lines[0],
-        audioUrl: lines[1],
+        title: lines[0]!,
+        audioUrl: lines[1]!,
     };
 }
 
@@ -525,8 +525,8 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
 
     const deviceMatch = path.match(/^\/api\/devices\/([^/]+)\/(.+)$/);
     if (deviceMatch) {
-        const ip = decodeURIComponent(deviceMatch[1]);
-        const action = deviceMatch[2];
+        const ip = decodeURIComponent(deviceMatch[1]!);
+        const action = deviceMatch[2]!;
         const device = getSonosDevice(ip);
 
         switch (action) {
@@ -1017,7 +1017,7 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
             for (const item of allResponses) {
                 const hrefMatch = item.match(/<(?:d:|D:)?href>([^<]+)<\/(?:d:|D:)?href>/i);
                 if (!hrefMatch) continue;
-                const href = decodeURIComponent(hrefMatch[1]);
+                const href = decodeURIComponent(hrefMatch[1]!);
                 const normalizedHref = href.replace(/\/+$/, "");
                 if (normalizedHref === normalizedUrl || normalizedHref === "") continue;
 
@@ -1150,7 +1150,7 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
             const deviceIP = body.deviceIP;
             if (!deviceIP) return json({ error: "deviceIP required" }, 400);
             const device = getSonosDevice(deviceIP);
-            const playlist = playlists[idx];
+            const playlist = playlists[idx]!;
 
             // Clear queue and add all tracks
             try {
@@ -1177,10 +1177,11 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         if (method === "PUT") {
             if (idx === -1) return json({ error: "not found" }, 404);
             const body = await parseBody(req);
+            const existing = playlists[idx]!;
             playlists[idx] = {
-                ...playlists[idx],
-                name: body.name ?? playlists[idx].name,
-                tracks: body.tracks ?? playlists[idx].tracks,
+                ...existing,
+                name: body.name ?? existing.name,
+                tracks: body.tracks ?? existing.tracks,
                 updatedAt: new Date().toISOString(),
             };
             await saveJSON(PLAYLISTS_PATH, playlists);
