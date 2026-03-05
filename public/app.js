@@ -14,6 +14,7 @@
         currentFiles: [], // files at current path level
         selectedPlaylist: null,
         pollInterval: null,
+        selectedFiles: new Set(), // multi-select: set of file paths
     };
 
     // ─── API ─────────────────────────────────────────────────────
@@ -227,6 +228,7 @@
             state.files = await api.get("/api/files");
             state.currentPath = [];
             state.currentFiles = state.files;
+            state.selectedFiles.clear();
             renderFiles();
         } catch (err) {
             toast("加载文件失败: " + err.message, "error");
@@ -235,6 +237,7 @@
 
     function navigateToPath(pathSegments) {
         state.currentPath = pathSegments;
+        state.selectedFiles.clear();
         let current = state.files;
         for (const seg of pathSegments) {
             const dir = current.find((f) => f.name === seg && f.isDir);
@@ -267,6 +270,189 @@
         });
     }
 
+    function getAudioFiles(list) {
+        return (list || []).filter((f) => !f.isDir);
+    }
+
+    function updateSelectionToolbar() {
+        const toolbar = document.querySelector(".selection-toolbar");
+        if (!toolbar) return;
+        const count = state.selectedFiles.size;
+        const audioFiles = getAudioFiles(state.currentFiles);
+        const selectAllCb = toolbar.querySelector(".select-all-cb");
+        const countEl = toolbar.querySelector(".selection-count");
+        const batchActions = toolbar.querySelector(".batch-actions");
+
+        if (selectAllCb) {
+            selectAllCb.checked = audioFiles.length > 0 && count === audioFiles.length;
+            selectAllCb.indeterminate = count > 0 && count < audioFiles.length;
+        }
+        if (countEl) countEl.textContent = count > 0 ? `已选 ${count} 项` : "";
+        if (batchActions) batchActions.style.display = count > 0 ? "flex" : "none";
+    }
+
+    function toggleFileSelection(path) {
+        if (state.selectedFiles.has(path)) {
+            state.selectedFiles.delete(path);
+        } else {
+            state.selectedFiles.add(path);
+        }
+        // Update visual state
+        const item = els.fileList.querySelector(`.file-item[data-path="${CSS.escape(path)}"]`);
+        if (item) {
+            item.classList.toggle("selected", state.selectedFiles.has(path));
+            const cb = item.querySelector(".file-checkbox");
+            if (cb) cb.checked = state.selectedFiles.has(path);
+        }
+        updateSelectionToolbar();
+    }
+
+    function toggleSelectAll() {
+        const audioFiles = getAudioFiles(state.currentFiles);
+        const allSelected = audioFiles.length > 0 && audioFiles.every((f) => state.selectedFiles.has(f.path));
+
+        if (allSelected) {
+            // Deselect all
+            audioFiles.forEach((f) => state.selectedFiles.delete(f.path));
+        } else {
+            // Select all
+            audioFiles.forEach((f) => state.selectedFiles.add(f.path));
+        }
+
+        // Update all checkboxes & visual state
+        els.fileList.querySelectorAll(".file-item[data-path]").forEach((item) => {
+            const path = item.dataset.path;
+            const isSelected = state.selectedFiles.has(path);
+            item.classList.toggle("selected", isSelected);
+            const cb = item.querySelector(".file-checkbox");
+            if (cb) cb.checked = isSelected;
+        });
+        updateSelectionToolbar();
+    }
+
+    async function playSelectedFiles() {
+        if (!state.selectedDevice) {
+            toast("请先选择设备", "error");
+            return;
+        }
+        const paths = [...state.selectedFiles];
+        if (paths.length === 0) return;
+
+        try {
+            // Play first file directly, queue the rest
+            const device = encodeURIComponent(state.selectedDevice);
+            if (paths.length === 1) {
+                await api.post("/api/files/play", { filePath: paths[0], deviceIP: state.selectedDevice });
+            } else {
+                // Clear queue, add all, play
+                await api.post(`/api/devices/${device}/queue/clear`);
+                for (const p of paths) {
+                    const musicUrl = `http://${location.hostname}:${location.port || 80}/api/music/${encodeURIComponent(p)}`;
+                    await api.post(`/api/devices/${device}/queue/add`, { uri: musicUrl });
+                }
+                await api.post(`/api/devices/${device}/play`);
+            }
+            toast(`正在播放 ${paths.length} 首歌曲`, "success");
+            setTimeout(pollState, 500);
+        } catch (err) {
+            toast("播放失败: " + err.message, "error");
+        }
+    }
+
+    function showBatchAddToPlaylistMenu(anchorEl) {
+        document.querySelectorAll(".dropdown-menu").forEach((el) => el.remove());
+        if (state.playlists.length === 0) {
+            toast("请先创建播放列表", "info");
+            return;
+        }
+
+        const menu = document.createElement("div");
+        menu.className = "dropdown-menu";
+        menu.style.cssText = `
+      position: fixed;
+      background: var(--bg-secondary);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      padding: 6px;
+      box-shadow: var(--shadow-lg);
+      z-index: 500;
+      min-width: 180px;
+      animation: slideUp 0.2s ease;
+    `;
+
+        state.playlists.forEach((pl) => {
+            const item = document.createElement("button");
+            item.style.cssText = `
+        display: block;
+        width: 100%;
+        padding: 8px 14px;
+        border: none;
+        background: none;
+        color: var(--text-primary);
+        font-size: 13px;
+        font-family: var(--font);
+        text-align: left;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        transition: background 0.2s;
+      `;
+            item.textContent = pl.name;
+            item.onmouseenter = () => (item.style.background = "var(--surface-hover)");
+            item.onmouseleave = () => (item.style.background = "none");
+            item.onclick = async () => {
+                menu.remove();
+                await batchAddToPlaylist(pl.id);
+            };
+            menu.appendChild(item);
+        });
+
+        const rect = anchorEl.getBoundingClientRect();
+        document.body.appendChild(menu);
+        menu.style.left = Math.min(rect.left, window.innerWidth - 200) + "px";
+        menu.style.top = rect.bottom + 4 + "px";
+
+        setTimeout(() => {
+            const close = (e) => {
+                if (!menu.contains(e.target)) {
+                    menu.remove();
+                    document.removeEventListener("click", close);
+                }
+            };
+            document.addEventListener("click", close);
+        }, 0);
+    }
+
+    async function batchAddToPlaylist(playlistId) {
+        const pl = state.playlists.find((p) => p.id === playlistId);
+        if (!pl) return;
+
+        const paths = [...state.selectedFiles];
+        const audioFiles = getAudioFiles(state.currentFiles);
+        let addedCount = 0;
+
+        for (const path of paths) {
+            if (pl.tracks.some((t) => t.path === path)) continue;
+            const file = audioFiles.find((f) => f.path === path);
+            if (!file) continue;
+            pl.tracks.push({ path: file.path, name: file.name, size: file.size || 0 });
+            addedCount++;
+        }
+
+        if (addedCount === 0) {
+            toast("所有歌曲已在播放列表中", "info");
+            return;
+        }
+
+        try {
+            await api.put(`/api/playlists/${playlistId}`, { tracks: pl.tracks });
+            toast(`已添加 ${addedCount} 首歌曲到「${pl.name}」`, "success");
+            renderSidebarPlaylists();
+            if (state.selectedPlaylist === playlistId) renderPlaylistDetail(pl);
+        } catch (err) {
+            toast("添加失败: " + err.message, "error");
+        }
+    }
+
     function renderFiles() {
         renderBreadcrumb();
         const list = state.currentFiles;
@@ -281,7 +467,25 @@
             return;
         }
 
-        els.fileList.innerHTML = list
+        const audioFiles = getAudioFiles(list);
+        const hasAudio = audioFiles.length > 0;
+
+        // Selection toolbar
+        const toolbarHTML = hasAudio ? `
+        <div class="selection-toolbar">
+          <label class="checkbox-label select-all-label">
+            <input type="checkbox" class="file-checkbox select-all-cb">
+            <span class="checkbox-custom"></span>
+            <span>全选</span>
+          </label>
+          <span class="selection-count"></span>
+          <div class="batch-actions" style="display:none;">
+            <button class="btn sm primary batch-play" title="播放选中">▶ 播放选中</button>
+            <button class="btn sm batch-add-to-playlist" title="添加到播放列表">+ 添加到列表</button>
+          </div>
+        </div>` : "";
+
+        const itemsHTML = list
             .map((f) => {
                 if (f.isDir) {
                     return `
@@ -293,8 +497,13 @@
             <span class="file-size">${f.children ? f.children.length + " 项" : ""}</span>
           </div>`;
                 } else {
+                    const isSelected = state.selectedFiles.has(f.path);
                     return `
-          <div class="file-item" data-path="${f.path}">
+          <div class="file-item${isSelected ? " selected" : ""}" data-path="${f.path}">
+            <label class="checkbox-label file-select-label" data-check-path="${f.path}">
+              <input type="checkbox" class="file-checkbox" ${isSelected ? "checked" : ""}>
+              <span class="checkbox-custom"></span>
+            </label>
             <div class="file-icon audio">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
             </div>
@@ -308,6 +517,47 @@
                 }
             })
             .join("");
+
+        els.fileList.innerHTML = toolbarHTML + itemsHTML;
+
+        // Selection toolbar events
+        const selectAllCb = els.fileList.querySelector(".select-all-cb");
+        if (selectAllCb) {
+            selectAllCb.addEventListener("change", (e) => {
+                e.stopPropagation();
+                toggleSelectAll();
+            });
+        }
+
+        const batchPlayBtn = els.fileList.querySelector(".batch-play");
+        if (batchPlayBtn) {
+            batchPlayBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                playSelectedFiles();
+            });
+        }
+
+        const batchAddBtn = els.fileList.querySelector(".batch-add-to-playlist");
+        if (batchAddBtn) {
+            batchAddBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showBatchAddToPlaylistMenu(batchAddBtn);
+            });
+        }
+
+        // File checkbox events
+        els.fileList.querySelectorAll(".file-select-label").forEach((label) => {
+            label.addEventListener("click", (e) => {
+                e.stopPropagation();
+            });
+            const cb = label.querySelector(".file-checkbox");
+            if (cb) {
+                cb.addEventListener("change", (e) => {
+                    e.stopPropagation();
+                    toggleFileSelection(label.dataset.checkPath);
+                });
+            }
+        });
 
         // Directory navigation
         els.fileList.querySelectorAll("[data-dir]").forEach((el) => {
@@ -348,6 +598,9 @@
                 });
             });
         });
+
+        // Update toolbar state
+        updateSelectionToolbar();
     }
 
     // ─── Add to Playlist Dropdown ────────────────────────────────
