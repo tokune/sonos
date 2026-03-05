@@ -142,15 +142,17 @@ async function downloadYouTubeAudio(url: string): Promise<{ filePath: string; ti
     const needsTranscode = !SONOS_AUDIO_EXTS.has(sourceExt);
 
     // Step 2: Download (with or without transcoding)
+    // Use %(ext)s template so yt-dlp properly names intermediate files
+    const outputTemplate = join(YT_CACHE_DIR, `${streamId}.%(ext)s`);
     const finalExt = needsTranscode ? "mp3" : sourceExt;
-    const outputPath = join(YT_CACHE_DIR, `${streamId}.${finalExt}`);
+    const finalPath = join(YT_CACHE_DIR, `${streamId}.${finalExt}`);
 
     const dlArgs = [
         "yt-dlp",
         "--js-runtimes", "bun",
         "--remote-components", "ejs:github",
         "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio",
-        "-o", outputPath,
+        "-o", outputTemplate,
         url
     ];
     if (cookieArgs.length) dlArgs.splice(3, 0, ...cookieArgs);
@@ -174,7 +176,44 @@ async function downloadYouTubeAudio(url: string): Promise<{ filePath: string; ti
         throw new Error(stderr.trim() || "yt-dlp download failed");
     }
 
-    return { filePath: outputPath, title, ext: finalExt };
+    return { filePath: finalPath, title, ext: finalExt };
+}
+
+async function clearYtCache(): Promise<{ deleted: number; freedBytes: number }> {
+    let deleted = 0;
+    let freedBytes = 0;
+    try {
+        const items = await readdir(YT_CACHE_DIR);
+        for (const item of items) {
+            const fullPath = join(YT_CACHE_DIR, item);
+            try {
+                const s = await stat(fullPath);
+                freedBytes += s.size;
+                const f = Bun.file(fullPath);
+                await f.delete();
+                deleted++;
+            } catch { }
+        }
+    } catch { }
+    ytStreams.clear();
+    return { deleted, freedBytes };
+}
+
+async function cleanupExpiredYtCache(): Promise<void> {
+    const now = Date.now();
+    try {
+        const items = await readdir(YT_CACHE_DIR);
+        for (const item of items) {
+            const fullPath = join(YT_CACHE_DIR, item);
+            try {
+                const s = await stat(fullPath);
+                if (now - s.mtimeMs > YT_STREAM_TTL_MS) {
+                    await Bun.file(fullPath).delete();
+                }
+            } catch { }
+        }
+    } catch { }
+    cleanupExpiredStreams();
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -999,6 +1038,28 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
         }
     }
 
+    // ── YouTube cache management ──
+    if (path === "/api/yt-cache" && method === "GET") {
+        let totalSize = 0;
+        let fileCount = 0;
+        try {
+            const items = await readdir(YT_CACHE_DIR);
+            for (const item of items) {
+                try {
+                    const s = await stat(join(YT_CACHE_DIR, item));
+                    totalSize += s.size;
+                    fileCount++;
+                } catch { }
+            }
+        } catch { }
+        return json({ fileCount, totalSizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100, activeStreams: ytStreams.size });
+    }
+
+    if (path === "/api/yt-cache/clear" && method === "POST") {
+        const result = await clearYtCache();
+        return json({ ok: true, ...result, freedMB: Math.round(result.freedBytes / 1024 / 1024 * 100) / 100 });
+    }
+
     // ── Config routes ──
     if (path === "/api/config" && method === "GET") {
         // Don't expose password in full
@@ -1139,6 +1200,10 @@ async function handleAPI(req: Request, path: string): Promise<Response> {
 // ─── Static Files + Server ───────────────────────────────────────
 await loadState();
 await ensureDir(join(import.meta.dir, "music"));
+await ensureDir(YT_CACHE_DIR);
+
+// Clean up expired cache on startup
+await cleanupExpiredYtCache().then(() => console.log("[startup] Cleaned up expired yt-cache files")).catch(() => { });
 
 const PUBLIC_DIR = join(import.meta.dir, "public");
 
