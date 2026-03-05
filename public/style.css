@@ -913,6 +913,14 @@ body {
   gap: 8px;
 }
 
+.volume-pct {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ─── Modal ──────────────────────────────────────── */
 .modal-overlay {
   position: fixed;

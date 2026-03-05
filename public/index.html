@@ -278,6 +278,7 @@
           </svg>
         </button>
         <input type="range" id="volumeBar" class="volume-bar" min="0" max="100" value="30" step="1">
+        <span class="volume-pct" id="volumePct">30%</span>
       </div>
     </footer>
 
@@ -335,6 +336,21 @@
           <div class="modal-footer">
             <button class="btn close-modal" data-modal="createPlaylistModal">取消</button>
             <button id="confirmCreatePlaylist" class="btn primary">创建</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Confirm Modal -->
+    <div class="modal-overlay" id="confirmModal" style="display:none">
+      <div class="modal glass" style="max-width:380px;">
+        <div class="modal-header">
+          <h3 id="confirmModalTitle">确认操作</h3>
+        </div>
+        <div class="modal-body">
+          <p id="confirmModalMessage" style="font-size:14px;color:var(--text-secondary);margin:0 0 20px;"></p>
+          <div class="modal-footer">
+            <button id="confirmModalCancel" class="btn">取消</button>
+            <button id="confirmModalOk" class="btn danger">确认删除</button>
           </div>
         </div>
       </div>

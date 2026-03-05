@@ -17,6 +17,35 @@
         selectedFiles: new Set(), // multi-select: set of file paths
     };
 
+    // ─── Custom Confirm Dialog ───────────────────────────────────
+    function customConfirm(message, title = "确认操作") {
+        return new Promise((resolve) => {
+            const modal = document.getElementById("confirmModal");
+            const titleEl = document.getElementById("confirmModalTitle");
+            const msgEl = document.getElementById("confirmModalMessage");
+            const okBtn = document.getElementById("confirmModalOk");
+            const cancelBtn = document.getElementById("confirmModalCancel");
+
+            titleEl.textContent = title;
+            msgEl.textContent = message;
+            modal.style.display = "flex";
+
+            function cleanup() {
+                modal.style.display = "none";
+                okBtn.removeEventListener("click", onOk);
+                cancelBtn.removeEventListener("click", onCancel);
+                modal.removeEventListener("click", onOverlay);
+            }
+            function onOk() { cleanup(); resolve(true); }
+            function onCancel() { cleanup(); resolve(false); }
+            function onOverlay(e) { if (e.target === modal) { cleanup(); resolve(false); } }
+
+            okBtn.addEventListener("click", onOk);
+            cancelBtn.addEventListener("click", onCancel);
+            modal.addEventListener("click", onOverlay);
+        });
+    }
+
     // ─── API ─────────────────────────────────────────────────────
     const api = {
         async get(url) {
@@ -71,6 +100,7 @@
         currentTime: $("#currentTime"),
         totalTime: $("#totalTime"),
         volumeBar: $("#volumeBar"),
+        volumePct: $("#volumePct"),
         settingsModal: $("#settingsModal"),
         musicDirInput: $("#musicDirInput"),
         saveMusicDir: $("#saveMusicDir"),
@@ -351,6 +381,7 @@
 
         // Volume
         els.volumeBar.value = s.volume || 0;
+        els.volumePct.textContent = (s.volume || 0) + "%";
 
         // Mute
         const isMuted = s.muted;
@@ -946,7 +977,7 @@
         els.playlistContent.querySelectorAll(".del-pl").forEach((btn) => {
             btn.addEventListener("click", async (e) => {
                 e.stopPropagation();
-                if (!confirm("确认删除此播放列表？")) return;
+                if (!(await customConfirm("确认删除此播放列表？", "删除播放列表"))) return;
                 try {
                     await api.del(`/api/playlists/${btn.dataset.id}`);
                     state.playlists = state.playlists.filter((p) => p.id !== btn.dataset.id);
@@ -1154,6 +1185,7 @@
         // Volume
         let volumeDebounce;
         els.volumeBar.addEventListener("input", () => {
+            els.volumePct.textContent = els.volumeBar.value + "%";
             clearTimeout(volumeDebounce);
             volumeDebounce = setTimeout(() => {
                 playerControl("volume", { volume: parseInt(els.volumeBar.value) });
